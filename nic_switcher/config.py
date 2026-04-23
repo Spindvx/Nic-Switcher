@@ -26,6 +26,12 @@ class Preset:
     gateway: str = ""
     dns1: str = ""
     dns2: str = ""
+    # MAC override for this preset, 12 hex chars (e.g. 'AABBCCDDEEFF') or one
+    # of two sentinels interpreted by nic.apply_preset:
+    #   ""           — don't touch MAC (fastest path, no adapter restart)
+    #   "restore"    — remove any override, restore hardware MAC
+    #   "<12 hex>"   — apply this override
+    mac: str = ""
 
     @property
     def subnet_mask(self) -> str:
@@ -63,10 +69,20 @@ class AppConfig:
             return cfg
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            # Filter unknown keys so a config written by a future version
+            # with new Preset fields doesn't wipe the user's presets here.
+            preset_fields = set(Preset.__dataclass_fields__)
+            dhcp_fields = set(DhcpConfig.__dataclass_fields__)
             return cls(
                 selected_nic=data.get("selected_nic"),
-                presets=[Preset(**p) for p in data.get("presets", [])],
-                dhcp=DhcpConfig(**data.get("dhcp", {})),
+                presets=[
+                    Preset(**{k: v for k, v in p.items() if k in preset_fields})
+                    for p in data.get("presets", [])
+                ],
+                dhcp=DhcpConfig(**{
+                    k: v for k, v in data.get("dhcp", {}).items()
+                    if k in dhcp_fields
+                }),
                 auto_start=data.get("auto_start", False),
             )
         except Exception:

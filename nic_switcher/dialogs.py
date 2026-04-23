@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from . import firewall, icons, nic as nic_mod, theme
+from . import firewall, icons, mac as mac_mod, nic as nic_mod, theme
 from . import discover
 from .config import DhcpConfig, Preset
 from .theme import STYLE
@@ -20,6 +20,17 @@ from .validate import (
     is_valid_ipv4, is_valid_mask, mask_to_prefix, prefix_to_mask,
     validate_dhcp_range, validate_preset,
 )
+
+
+def _display_mac_field(stored: str) -> str:
+    """Render a stored Preset.mac value for the text box. Empty and 'restore'
+    pass through; 12-hex gets pretty-printed with colons."""
+    if not stored:
+        return ""
+    if stored.strip().lower() == "restore":
+        return "restore"
+    norm = mac_mod.normalize_mac(stored)
+    return mac_mod.format_mac_pretty(norm) if norm else stored
 
 
 def _apply_window_chrome(dlg: QDialog):
@@ -57,13 +68,14 @@ class PresetDialog(QDialog):
     def __init__(self, preset: Preset | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit preset" if preset and preset.name else "New preset")
-        self.resize(440, 440)
+        self.resize(460, 520)
         _apply_window_chrome(self)
 
         title = QLabel("Preset")
         title.setObjectName("title")
         subtitle = QLabel(
-            "Leave IP blank to make this a 'switch to DHCP client' preset."
+            "Leave IP blank to make this a 'switch to DHCP client' preset. "
+            "Leave MAC blank to keep whatever is currently set."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -83,6 +95,33 @@ class PresetDialog(QDialog):
         self.dns2 = QLineEdit(preset.dns2 if preset else "")
         self.dns2.setPlaceholderText("1.1.1.1   (optional)")
 
+        # MAC — text + Random + Restore buttons on one row.
+        self.mac = QLineEdit(_display_mac_field(preset.mac if preset else ""))
+        self.mac.setPlaceholderText("AA:BB:CC:DD:EE:FF   (blank = leave alone)")
+        mac_random = QPushButton("Random")
+        mac_random.setObjectName("ghost")
+        mac_random.setCursor(Qt.CursorShape.PointingHandCursor)
+        mac_random.setToolTip("Fill a random locally-administered unicast MAC")
+        mac_random.clicked.connect(self._mac_randomize)
+        mac_restore = QPushButton("Restore")
+        mac_restore.setObjectName("ghost")
+        mac_restore.setCursor(Qt.CursorShape.PointingHandCursor)
+        mac_restore.setToolTip("On apply, clear the MAC override and restore the hardware MAC")
+        mac_restore.clicked.connect(self._mac_restore_sentinel)
+        mac_clear = QPushButton("Clear")
+        mac_clear.setObjectName("ghost")
+        mac_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        mac_clear.setToolTip("Clear this field so applying the preset won't touch the MAC")
+        mac_clear.clicked.connect(lambda: self.mac.setText(""))
+        mac_row = QWidget()
+        mac_rl = QHBoxLayout(mac_row)
+        mac_rl.setContentsMargins(0, 0, 0, 0)
+        mac_rl.setSpacing(6)
+        mac_rl.addWidget(self.mac, 1)
+        mac_rl.addWidget(mac_random)
+        mac_rl.addWidget(mac_restore)
+        mac_rl.addWidget(mac_clear)
+
         form = QFormLayout()
         form.setSpacing(8)
         form.setVerticalSpacing(8)
@@ -94,6 +133,7 @@ class PresetDialog(QDialog):
         form.addRow(_form_label("Gateway"), self.gateway)
         form.addRow(_form_label("DNS 1"), self.dns1)
         form.addRow(_form_label("DNS 2"), self.dns2)
+        form.addRow(_form_label("MAC address"), mac_row)
 
         self.err = _InlineError()
 
@@ -131,6 +171,27 @@ class PresetDialog(QDialog):
         shadow.setColor(QColor(0, 0, 0, 180))
         root.setGraphicsEffect(shadow)
 
+    def _mac_randomize(self):
+        mac12 = mac_mod.random_locally_administered_mac()
+        self.mac.setText(mac_mod.format_mac_pretty(mac12))
+
+    def _mac_restore_sentinel(self):
+        self.mac.setText("restore")
+
+    def _mac_stored_value(self) -> tuple[str, str]:
+        """Parse the MAC field. Returns (stored_value, error). Empty stored_value
+        with empty error means 'don't touch MAC'. Stored 'restore' means restore
+        sentinel. Otherwise 12 hex uppercase."""
+        raw = self.mac.text().strip()
+        if not raw:
+            return "", ""
+        if raw.lower() == "restore":
+            return "restore", ""
+        ok, err, norm = mac_mod.validate_mac(raw)
+        if not ok:
+            return "", err
+        return norm or "", ""
+
     def _accept(self):
         ip = self.ip.text().strip()
         mask_text = self.mask.text().strip() or "255.255.255.0"
@@ -138,9 +199,17 @@ class PresetDialog(QDialog):
             self.err.set(f"Invalid subnet mask: {mask_text!r}")
             return
         prefix = mask_to_prefix(mask_text) or 24
+        mac_stored, mac_err = self._mac_stored_value()
+        if mac_err:
+            self.err.set(mac_err)
+            return
+        # Pass the normalized MAC to the shared validator as a belt-and-
+        # braces check (skips the sentinel which is not a hex MAC).
+        mac_for_validate = mac_stored if mac_stored != "restore" else ""
         ok, msg = validate_preset(
             ip, prefix, self.gateway.text().strip(),
             self.dns1.text().strip(), self.dns2.text().strip(),
+            mac_for_validate,
         )
         if not ok:
             self.err.set(msg)
@@ -150,12 +219,16 @@ class PresetDialog(QDialog):
             return
         self.err.set("")
         self._result_prefix = prefix
+        self._result_mac = mac_stored
         self.accept()
 
     def result_preset(self) -> Preset:
         prefix = getattr(self, "_result_prefix", None)
         if prefix is None:
             prefix = mask_to_prefix(self.mask.text().strip()) or 24
+        mac = getattr(self, "_result_mac", None)
+        if mac is None:
+            mac, _ = self._mac_stored_value()
         return Preset(
             name=self.name.text().strip() or "Preset",
             ip=self.ip.text().strip(),
@@ -163,6 +236,7 @@ class PresetDialog(QDialog):
             gateway=self.gateway.text().strip(),
             dns1=self.dns1.text().strip(),
             dns2=self.dns2.text().strip(),
+            mac=mac,
         )
 
 

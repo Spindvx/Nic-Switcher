@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 
 from . import dhcp as dhcp_mod
 from . import icons as icons
+from . import mac as mac_mod
 from . import nic as nic_mod
 from . import theme
 from .blur import enable_blur, try_enable_mica
@@ -92,6 +93,15 @@ class PresetCard(QFrame):
             sub_bits.append(f"gw {preset.gateway}")
         if preset.dns1:
             sub_bits.append(preset.dns1 + (f", {preset.dns2}" if preset.dns2 else ""))
+        if preset.mac:
+            if preset.mac.strip().lower() == "restore":
+                sub_bits.append("MAC: restore")
+            else:
+                norm = mac_mod.normalize_mac(preset.mac)
+                sub_bits.append(
+                    f"MAC {mac_mod.format_mac_pretty(norm)}" if norm
+                    else f"MAC {preset.mac}"
+                )
         sub: QLabel | None = None
         if sub_bits:
             sub = QLabel("  •  ".join(sub_bits))
@@ -138,11 +148,12 @@ class PresetCard(QFrame):
 
 class Popup(QWidget):
     WIDTH = 440
-    HEIGHT = 780
+    HEIGHT = 820
     SCREEN_MARGIN = 14
 
     apply_done = pyqtSignal(bool, str)
     dhcp_done = pyqtSignal(bool, str)
+    mac_done = pyqtSignal(bool, str)
 
     def __init__(self, config: AppConfig):
         super().__init__()
@@ -150,8 +161,10 @@ class Popup(QWidget):
         self.sniffer = Sniffer()
         self._apply_busy = False
         self._dhcp_busy = False
+        self._mac_busy = False
         self.apply_done.connect(self._on_apply_done)
         self.dhcp_done.connect(self._on_dhcp_done)
+        self.mac_done.connect(self._on_mac_done)
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -265,6 +278,34 @@ class Popup(QWidget):
         nic_status_row.addWidget(self.nic_led)
         nic_status_row.addWidget(self.nic_status, 1)
         layout.addLayout(nic_status_row)
+
+        # MAC row — quick randomize / restore.
+        mac_row = QHBoxLayout()
+        mac_row.setContentsMargins(2, 2, 0, 0)
+        mac_row.setSpacing(6)
+        self.mac_label = QLabel("MAC  —")
+        self.mac_label.setObjectName("subtle")
+        self.mac_random_btn = QPushButton("Randomize MAC")
+        self.mac_random_btn.setObjectName("ghost")
+        self.mac_random_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mac_random_btn.setFixedHeight(26)
+        self.mac_random_btn.setToolTip(
+            "Set a random locally-administered MAC and restart the adapter "
+            "(takes ~5s)"
+        )
+        self.mac_random_btn.clicked.connect(self._randomize_mac)
+        self.mac_restore_btn = QPushButton("Restore")
+        self.mac_restore_btn.setObjectName("ghost")
+        self.mac_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mac_restore_btn.setFixedHeight(26)
+        self.mac_restore_btn.setToolTip(
+            "Clear any MAC override and bring back the hardware MAC"
+        )
+        self.mac_restore_btn.clicked.connect(self._restore_mac)
+        mac_row.addWidget(self.mac_label, 1)
+        mac_row.addWidget(self.mac_random_btn)
+        mac_row.addWidget(self.mac_restore_btn)
+        layout.addLayout(mac_row)
 
         # ----- Presets -----
         pres_header = QHBoxLayout()
@@ -445,10 +486,11 @@ class Popup(QWidget):
         if not info:
             self.nic_status.setText("No interface selected")
             self._set_led(self.nic_led, theme.TEXT_DIM)
+            self.mac_label.setText("MAC  —")
+            for btn in (self.mac_random_btn, self.mac_restore_btn):
+                btn.setEnabled(False)
             return
         bits = [info.ipv4 or "no IPv4", "up" if info.is_up else "down"]
-        if info.mac:
-            bits.append(info.mac.lower())
         self.nic_status.setText("  •  ".join(bits))
         if info.is_up and info.ipv4:
             self._set_led(self.nic_led, theme.SUCCESS)
@@ -456,6 +498,20 @@ class Popup(QWidget):
             self._set_led(self.nic_led, theme.WARNING)
         else:
             self._set_led(self.nic_led, theme.TEXT_DIM)
+        # MAC label reflects current MAC + override status.
+        cur = mac_mod.normalize_mac(info.mac) if info.mac else None
+        overridden = mac_mod.has_override(name)
+        if cur:
+            tag = "  (overridden)" if overridden else ""
+            self.mac_label.setText(f"MAC  {mac_mod.format_mac_pretty(cur)}{tag}")
+        else:
+            self.mac_label.setText("MAC  —")
+        for btn in (self.mac_random_btn, self.mac_restore_btn):
+            btn.setEnabled(not self._mac_busy)
+        # Disable Restore if there's no override to restore from.
+        self.mac_restore_btn.setEnabled(
+            overridden is True and not self._mac_busy
+        )
 
     def _set_led(self, label: QLabel, color: str, size: int = 8):
         label.setPixmap(icons.dot(size, color).pixmap(size, size))
@@ -552,6 +608,47 @@ class Popup(QWidget):
             self.config.presets.remove(preset)
             self.config.save()
             self._rebuild_presets()
+
+    # ---- MAC quick actions ----
+    def _run_mac_action_bg(self, verb: str, fn):
+        """Shared helper. verb is user-facing ('Randomizing MAC…')."""
+        nic_name = self.nic_combo.currentData()
+        if not nic_name:
+            self._set_status("Select a NIC first", "warn")
+            return
+        if self._mac_busy:
+            self._set_status("MAC change already in progress…", "warn")
+            return
+        self._mac_busy = True
+        self.mac_random_btn.setEnabled(False)
+        self.mac_restore_btn.setEnabled(False)
+        self._set_status(f"{verb}…", "warn")
+
+        def worker():
+            try:
+                ok, msg = fn(nic_name)
+            except Exception as e:
+                ok, msg = False, f"MAC change failed: {e}"
+            self.mac_done.emit(ok, msg)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _randomize_mac(self):
+        mac12 = mac_mod.random_locally_administered_mac()
+        self._run_mac_action_bg(
+            f"Setting MAC to {mac_mod.format_mac_pretty(mac12)}",
+            lambda name: mac_mod.set_mac(name, mac12),
+        )
+
+    def _restore_mac(self):
+        self._run_mac_action_bg("Restoring hardware MAC", mac_mod.restore_mac)
+
+    def _on_mac_done(self, ok: bool, msg: str):
+        self._mac_busy = False
+        self._set_status(msg, "ok" if ok else "err")
+        # Adapter was just disabled/enabled — repopulate so current MAC,
+        # IP and link state all refresh together.
+        QTimer.singleShot(600, self.refresh_all)
 
     # ---- manual ----
     def _manual_prefix(self) -> int | None:

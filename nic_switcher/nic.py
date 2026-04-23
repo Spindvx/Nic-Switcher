@@ -7,6 +7,7 @@ from typing import Optional
 
 import psutil
 
+from . import mac as mac_mod
 from .config import Preset
 from .validate import validate_preset
 
@@ -69,16 +70,43 @@ def list_nics() -> list[NicInfo]:
     return nics
 
 
+def _apply_mac_if_any(nic_name: str, mac_field: str) -> tuple[bool, str]:
+    """Handle the Preset.mac field. Returns (ok, err_if_any).
+
+    "" — skip (no adapter restart), return (True, "").
+    "restore" — remove override and restart adapter.
+    otherwise — treat as a MAC, validate, apply, restart adapter.
+    """
+    if not mac_field:
+        return True, ""
+    if mac_field.strip().lower() == "restore":
+        return mac_mod.restore_mac(nic_name)
+    return mac_mod.set_mac(nic_name, mac_field)
+
+
 def apply_preset(nic_name: str, preset: Preset) -> tuple[bool, str]:
     """Apply a preset to the given NIC. Empty IP => switch to DHCP."""
-    if not preset.ip:
-        return set_dhcp(nic_name)
-
+    # Validate up front so a bad MAC never kicks off a partial apply.
     ok, err = validate_preset(
-        preset.ip, preset.prefix, preset.gateway, preset.dns1, preset.dns2
+        preset.ip, preset.prefix, preset.gateway, preset.dns1, preset.dns2,
+        preset.mac,
     )
     if not ok:
         return False, err
+
+    # MAC first — it forces an adapter restart, which drops any IP config.
+    # Applying IP afterwards is correct ordering.
+    mac_ok, mac_err = _apply_mac_if_any(nic_name, preset.mac)
+    if not mac_ok:
+        return False, mac_err
+
+    if not preset.ip:
+        dhcp_ok, dhcp_msg = set_dhcp(nic_name)
+        if not dhcp_ok:
+            return False, dhcp_msg
+        if preset.mac:
+            return True, f"{dhcp_msg} (MAC updated)"
+        return True, dhcp_msg
 
     rc, out, err = _run(
         [
@@ -106,7 +134,8 @@ def apply_preset(nic_name: str, preset: Preset) -> tuple[bool, str]:
             "netsh", "interface", "ip", "set", "dnsservers",
             f"name={nic_name}", "dhcp",
         ])
-    return True, f"Applied {preset.name} ({preset.ip}/{preset.prefix})"
+    suffix = " + MAC" if preset.mac else ""
+    return True, f"Applied {preset.name} ({preset.ip}/{preset.prefix}){suffix}"
 
 
 def set_dhcp(nic_name: str) -> tuple[bool, str]:

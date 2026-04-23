@@ -58,8 +58,19 @@ def last_octet(ip: str) -> Optional[int]:
 
 
 def validate_preset(ip: str, prefix: int, gateway: str = "",
-                    dns1: str = "", dns2: str = "") -> tuple[bool, str]:
-    """Returns (ok, error_message). Empty ip is treated as 'DHCP mode' (valid)."""
+                    dns1: str = "", dns2: str = "",
+                    mac: str = "") -> tuple[bool, str]:
+    """Returns (ok, error_message). Empty ip is treated as 'DHCP mode' (valid).
+
+    `mac` is optional; when non-empty it must be a valid unicast MAC.
+    """
+    if mac and mac.strip().lower() != "restore":
+        # Lazy import: keeps validate.py importable on non-Windows CI boxes.
+        # "restore" is a sentinel handled downstream — not a MAC to validate.
+        from .mac import validate_mac
+        mac_ok, mac_err, _ = validate_mac(mac)
+        if not mac_ok:
+            return False, mac_err
     if not ip:
         return True, ""
     if not is_valid_ipv4(ip):
