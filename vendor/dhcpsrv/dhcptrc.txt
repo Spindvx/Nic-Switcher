@@ -1,0 +1,7 @@
+[04/22/2026 21:38:14] DHCP Server V2.5.2.3 started as Application
+[04/22/2026 21:38:15] NetworkAdapter Initialization returns 0
+[04/22/2026 21:38:15] Adapter 0 with IP address 172.17.160.1 found but not used
+[04/22/2026 21:38:15] Adapter 1 with IP address 10.246.218.155 found but not used
+[04/22/2026 21:38:15] Adapter 2 with IP address 169.254.98.166 found but not used
+[04/22/2026 21:38:15] Adapter 3 with IP address 192.168.50.75 found (pAdap=0x02161ca0)
+[04/22/2026 21:38:15] Adapter 4 with IP address 100.69.149.69 found but not used
