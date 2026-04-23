@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .discover import (
-    Device, MDNS_KIND, default_gateway_for, infer_kind, oui_lookup, read_arp_cache,
+    Device, MDNS_KIND, default_gateway_for, infer_kind, is_av, oui_lookup,
+    read_arp_cache, resolve_hostname,
 )
 
 
@@ -125,9 +126,51 @@ class Sniffer:
         for d in snaps:
             if not d.kind:
                 d.kind = infer_kind(d)
-        snaps.sort(key=lambda d: (not d.is_gateway, d.kind != "qsys", d.kind != "crestron",
-                                  d.kind != "biamp", -d.packets, d.ip))
+        # Sort order: gateway first, then AV devices, then everything else by
+        # traffic/IP. Among AV devices, Q-SYS > Crestron > Biamp > Dante >
+        # others reflects typical AV deployment priority.
+        AV_PRIORITY = ["qsys", "crestron", "biamp", "dante", "extron", "amx",
+                       "shure", "videoconf", "display", "camera", "livewire",
+                       "yamaha", "clearone", "lutron", "solstice"]
+        av_rank = {k: i for i, k in enumerate(AV_PRIORITY)}
+        snaps.sort(key=lambda d: (
+            not d.is_gateway,
+            not is_av(d.kind),
+            av_rank.get(d.kind or "", 99),
+            -d.packets,
+            d.ip,
+        ))
         return snaps
+
+    def merge_dante(self, dante_devs: dict) -> int:
+        """Fold Dante devices discovered via zeroconf into the device table.
+        Returns the count of devices added or enriched.
+        """
+        touched = 0
+        with self._lock:
+            for ip, d in dante_devs.items():
+                if _is_skip(ip):
+                    continue
+                dev = self.devices.get(ip)
+                if dev is None:
+                    dev = Device(ip=ip)
+                    self.devices[ip] = dev
+                dev.kind = "dante"
+                if d.name and not dev.hostname:
+                    dev.hostname = d.name
+                # Represent each Dante mDNS service as an entry in mdns_services.
+                for svc in d.services:
+                    dev.mdns_services.add(f"_{svc}")
+                for port in d.ports:
+                    dev.ports.add(("udp", port))
+                if d.model and not dev.vendor:
+                    dev.vendor = f"Audinate Dante · {d.model}"
+                elif not dev.vendor:
+                    dev.vendor = "Audinate Dante"
+                touched += 1
+        if touched:
+            self._emit()
+        return touched
 
     def merge_arp(self) -> int:
         """Pull the Windows ARP cache and fill in MAC/vendor for known IPs. Returns rows added."""
@@ -152,8 +195,40 @@ class Sniffer:
                 if self.gateway_ip and ip == self.gateway_ip:
                     dev.is_gateway = True
                 dev.kind = infer_kind(dev)
+        # Fire hostname resolution in the background so the UI gets names
+        # without blocking the merge call. Safe to run concurrently with
+        # further sniff activity — we only mutate `hostname` on existing
+        # devices under the lock.
+        threading.Thread(target=self._resolve_hostnames_bg, daemon=True).start()
         self._emit()
         return added
+
+    def _resolve_hostnames_bg(self):
+        """Resolve hostnames for every device that doesn't already have one.
+        Uses a thread pool so a slow NetBIOS timeout doesn't block the rest."""
+        import concurrent.futures
+        with self._lock:
+            targets = [ip for ip, d in self.devices.items() if not d.hostname]
+        if not targets:
+            return
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
+            futs = {ex.submit(resolve_hostname, ip): ip for ip in targets}
+            resolved = 0
+            for fut in concurrent.futures.as_completed(futs):
+                ip = futs[fut]
+                try:
+                    host = fut.result()
+                except Exception:
+                    host = None
+                if not host:
+                    continue
+                with self._lock:
+                    dev = self.devices.get(ip)
+                    if dev is not None and not dev.hostname:
+                        dev.hostname = host
+                        resolved += 1
+        if resolved:
+            self._emit()
 
     def top_subnets(self, n: int = 3) -> list[tuple[str, int]]:
         return self.stats.subnets.most_common(n)

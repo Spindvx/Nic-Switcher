@@ -207,23 +207,23 @@ def dot(size: int = 10, color: str = "#6de3a4") -> QIcon:
 
 
 # -----------------------------------------------------------------------------
-# Connect partner logo — loads from resources/connect-logo.png with a text
+# Brand logo — loads from resources/spindux-logo.png with a text
 # fallback if the file isn't present. Drop your PNG at that path to override.
 # -----------------------------------------------------------------------------
 
-def _connect_logo_paths() -> list[Path]:
+def _brand_logo_paths() -> list[Path]:
     paths: list[Path] = []
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        paths.append(Path(meipass) / "resources" / "connect-logo.png")
+        paths.append(Path(meipass) / "resources" / "spindux-logo.png")
     here = Path(__file__).resolve().parent.parent
-    paths.append(here / "resources" / "connect-logo.png")
+    paths.append(here / "resources" / "spindux-logo.png")
     return paths
 
 
-def connect_logo(height: int = 22) -> QPixmap:
-    """Return the Connect logo scaled to `height`. Falls back to a text render."""
-    for p in _connect_logo_paths():
+def brand_logo(height: int = 22) -> QPixmap:
+    """Return the Spindux logo scaled to `height`. Falls back to a text render."""
+    for p in _brand_logo_paths():
         if p.is_file():
             pm = QPixmap(str(p))
             if not pm.isNull():
@@ -231,8 +231,8 @@ def connect_logo(height: int = 22) -> QPixmap:
                     height,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-    # Fallback: "connect" wordmark in Connect's red
-    aspect_width = int(height * 4.2)
+    # Fallback: "SPINDUX" wordmark
+    aspect_width = int(height * 4.6)
     pix = QPixmap(aspect_width, height)
     pix.fill(Qt.GlobalColor.transparent)
     p = QPainter(pix)
@@ -240,10 +240,10 @@ def connect_logo(height: int = 22) -> QPixmap:
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
     font = QFont("Segoe UI", int(height * 0.58))
     font.setWeight(QFont.Weight.Black)
-    font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 94)
+    font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
     p.setFont(font)
-    p.setPen(QColor("#d42730"))
-    p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "connect")
+    p.setPen(QColor("#d6d9e1"))
+    p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "SPINDUX")
     p.end()
     return pix
 

@@ -21,6 +21,7 @@ from typing import Optional
 import psutil
 
 from . import firewall
+from . import dhcp_log
 from .config import CONFIG_PATH, DhcpConfig
 from .validate import validate_dhcp_range
 
@@ -246,6 +247,17 @@ def _read_exit_reason(cfg: DhcpConfig, stderr_path: Path) -> str:
     if not hints:
         return f"Check {log} for details."
     return " | ".join(hints) + f"  (full log: {log})"
+
+
+def lease_snapshot(max_events: int = 25) -> dhcp_log.LeaseSnapshot:
+    """Pull the latest lease activity from the running server's trace file."""
+    log = _trace_path(DhcpConfig())  # path only depends on runtime dir, not cfg
+    events = dhcp_log.tail_events(log, max_events=max_events)
+    return dhcp_log.summarize(events)
+
+
+def trace_log_path() -> Path:
+    return _trace_path(DhcpConfig())
 
 
 def stop() -> tuple[bool, str]:

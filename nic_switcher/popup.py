@@ -147,8 +147,8 @@ class PresetCard(QFrame):
 # ---------------------------------------------------------------------------
 
 class Popup(QWidget):
-    WIDTH = 440
-    HEIGHT = 820
+    WIDTH = 460
+    HEIGHT = 900
     SCREEN_MARGIN = 14
 
     apply_done = pyqtSignal(bool, str)
@@ -182,6 +182,12 @@ class Popup(QWidget):
         self._fade = QPropertyAnimation(self, b"windowOpacity")
         self._fade.setDuration(160)
         self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        # Background poll for DHCP lease activity (only ticks while visible).
+        self._lease_timer = QTimer(self)
+        self._lease_timer.setInterval(2000)
+        self._lease_timer.timeout.connect(self._lease_tick)
+        self._lease_timer.start()
 
     # ---- chrome ----
     def showEvent(self, e):
@@ -279,33 +285,47 @@ class Popup(QWidget):
         nic_status_row.addWidget(self.nic_status, 1)
         layout.addLayout(nic_status_row)
 
-        # MAC row — quick randomize / restore.
+        # MAC edit row — manual entry + Apply + quick Random / Restore.
         mac_row = QHBoxLayout()
         mac_row.setContentsMargins(2, 2, 0, 0)
         mac_row.setSpacing(6)
-        self.mac_label = QLabel("MAC  —")
-        self.mac_label.setObjectName("subtle")
-        self.mac_random_btn = QPushButton("Randomize MAC")
+        self.mac_input = QLineEdit()
+        self.mac_input.setPlaceholderText("AA:BB:CC:DD:EE:FF")
+        self.mac_input.setFixedHeight(28)
+        self.mac_input.returnPressed.connect(self._apply_typed_mac)
+        self.mac_apply_btn = QPushButton("Apply")
+        self.mac_apply_btn.setObjectName("accent")
+        self.mac_apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mac_apply_btn.setFixedHeight(28)
+        self.mac_apply_btn.setToolTip("Apply the typed MAC and restart the adapter (~5s)")
+        self.mac_apply_btn.clicked.connect(self._apply_typed_mac)
+        self.mac_random_btn = QPushButton("Random")
         self.mac_random_btn.setObjectName("ghost")
         self.mac_random_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mac_random_btn.setFixedHeight(26)
+        self.mac_random_btn.setFixedHeight(28)
         self.mac_random_btn.setToolTip(
-            "Set a random locally-administered MAC and restart the adapter "
-            "(takes ~5s)"
+            "Set a random locally-administered MAC (writes immediately)"
         )
         self.mac_random_btn.clicked.connect(self._randomize_mac)
         self.mac_restore_btn = QPushButton("Restore")
         self.mac_restore_btn.setObjectName("ghost")
         self.mac_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mac_restore_btn.setFixedHeight(26)
+        self.mac_restore_btn.setFixedHeight(28)
         self.mac_restore_btn.setToolTip(
-            "Clear any MAC override and bring back the hardware MAC"
+            "Clear the MAC override and bring back the hardware MAC"
         )
         self.mac_restore_btn.clicked.connect(self._restore_mac)
-        mac_row.addWidget(self.mac_label, 1)
+        mac_row.addWidget(self.mac_input, 1)
+        mac_row.addWidget(self.mac_apply_btn)
         mac_row.addWidget(self.mac_random_btn)
         mac_row.addWidget(self.mac_restore_btn)
         layout.addLayout(mac_row)
+
+        # MAC status line (overridden indicator).
+        self.mac_status = QLabel("")
+        self.mac_status.setObjectName("subtle")
+        self.mac_status.setContentsMargins(2, 0, 0, 0)
+        layout.addWidget(self.mac_status)
 
         # ----- Presets -----
         pres_header = QHBoxLayout()
@@ -406,6 +426,13 @@ class Popup(QWidget):
         self.dhcp_status.setObjectName("subtle")
         layout.addWidget(self.dhcp_status)
 
+        # Lease activity — shown while DHCP is running.
+        self.dhcp_leases = QLabel("")
+        self.dhcp_leases.setObjectName("subtle")
+        self.dhcp_leases.setWordWrap(True)
+        self.dhcp_leases.setVisible(False)
+        layout.addWidget(self.dhcp_leases)
+
         dhcp_row = QHBoxLayout()
         dhcp_row.setSpacing(6)
         self.dhcp_settings = QPushButton("  Configure")
@@ -429,12 +456,12 @@ class Popup(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(10)
 
-        # Connect partner branding
-        connect = QLabel()
-        connect_pix = icons.connect_logo(22)
-        connect.setPixmap(connect_pix)
-        connect.setFixedHeight(22)
-        connect.setToolTip("Connect — your technology partner")
+        # Spindux branding
+        brand = QLabel()
+        brand_pix = icons.brand_logo(22)
+        brand.setPixmap(brand_pix)
+        brand.setFixedHeight(22)
+        brand.setToolTip("Spindux Enterprise")
 
         hint = QLabel("Esc to close")
         hint.setObjectName("subtle")
@@ -442,7 +469,7 @@ class Popup(QWidget):
         quit_btn.setObjectName("ghost")
         quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         quit_btn.clicked.connect(QApplication.instance().quit)
-        footer.addWidget(connect)
+        footer.addWidget(brand)
         footer.addStretch(1)
         footer.addWidget(hint)
         footer.addWidget(quit_btn)
@@ -486,9 +513,13 @@ class Popup(QWidget):
         if not info:
             self.nic_status.setText("No interface selected")
             self._set_led(self.nic_led, theme.TEXT_DIM)
-            self.mac_label.setText("MAC  —")
-            for btn in (self.mac_random_btn, self.mac_restore_btn):
+            self.mac_input.blockSignals(True)
+            self.mac_input.setText("")
+            self.mac_input.blockSignals(False)
+            self.mac_status.setText("")
+            for btn in (self.mac_apply_btn, self.mac_random_btn, self.mac_restore_btn):
                 btn.setEnabled(False)
+            self.mac_input.setEnabled(False)
             return
         bits = [info.ipv4 or "no IPv4", "up" if info.is_up else "down"]
         self.nic_status.setText("  •  ".join(bits))
@@ -498,15 +529,38 @@ class Popup(QWidget):
             self._set_led(self.nic_led, theme.WARNING)
         else:
             self._set_led(self.nic_led, theme.TEXT_DIM)
-        # MAC label reflects current MAC + override status.
+        # Only refresh the MAC field if the user isn't actively editing it —
+        # otherwise every refresh wipes their typing.
         cur = mac_mod.normalize_mac(info.mac) if info.mac else None
         overridden = mac_mod.has_override(name)
-        if cur:
-            tag = "  (overridden)" if overridden else ""
-            self.mac_label.setText(f"MAC  {mac_mod.format_mac_pretty(cur)}{tag}")
+        if not self.mac_input.hasFocus():
+            self.mac_input.blockSignals(True)
+            self.mac_input.setText(
+                mac_mod.format_mac_pretty(cur) if cur else ""
+            )
+            self.mac_input.blockSignals(False)
+        # Status line — show override + hardware MAC if available.
+        if overridden:
+            hw = mac_mod.hardware_mac(name)
+            if hw and hw != cur:
+                self.mac_status.setText(
+                    f"overridden from hardware {mac_mod.format_mac_pretty(hw)}"
+                )
+                self.mac_status.setStyleSheet(
+                    f"color: {theme.WARNING}; font-size: 11px;"
+                )
+            else:
+                self.mac_status.setText("overridden")
+                self.mac_status.setStyleSheet(
+                    f"color: {theme.WARNING}; font-size: 11px;"
+                )
         else:
-            self.mac_label.setText("MAC  —")
-        for btn in (self.mac_random_btn, self.mac_restore_btn):
+            self.mac_status.setText("hardware MAC")
+            self.mac_status.setStyleSheet(
+                f"color: {theme.TEXT_MUTED}; font-size: 11px;"
+            )
+        self.mac_input.setEnabled(not self._mac_busy)
+        for btn in (self.mac_apply_btn, self.mac_random_btn):
             btn.setEnabled(not self._mac_busy)
         # Disable Restore if there's no override to restore from.
         self.mac_restore_btn.setEnabled(
@@ -635,13 +689,29 @@ class Popup(QWidget):
 
     def _randomize_mac(self):
         mac12 = mac_mod.random_locally_administered_mac()
+        pretty = mac_mod.format_mac_pretty(mac12)
+        self.mac_input.setText(pretty)
         self._run_mac_action_bg(
-            f"Setting MAC to {mac_mod.format_mac_pretty(mac12)}",
+            f"Setting MAC to {pretty}",
             lambda name: mac_mod.set_mac(name, mac12),
         )
 
     def _restore_mac(self):
         self._run_mac_action_bg("Restoring hardware MAC", mac_mod.restore_mac)
+
+    def _apply_typed_mac(self):
+        raw = self.mac_input.text().strip()
+        if not raw:
+            self._set_status("Type a MAC (e.g. 02:AA:BB:CC:DD:EE) first", "warn")
+            return
+        ok, err, _ = mac_mod.validate_mac(raw)
+        if not ok:
+            self._set_status(err, "err")
+            return
+        self._run_mac_action_bg(
+            f"Setting MAC to {raw}",
+            lambda name: mac_mod.set_mac(name, raw),
+        )
 
     def _on_mac_done(self, ok: bool, msg: str):
         self._mac_busy = False
@@ -776,6 +846,57 @@ class Popup(QWidget):
         self._set_status(msg, "ok" if ok else "err")
         self._refresh_dhcp_ui()
 
+    def _lease_tick(self):
+        # Tight no-op when hidden or DHCP isn't running — cheap and avoids
+        # file I/O + UI churn when nobody's watching.
+        if not self.isVisible():
+            return
+        if not dhcp_mod.is_running():
+            return
+        self._refresh_dhcp_leases()
+
+    def _refresh_dhcp_leases(self):
+        """Pull recent lease events and render a terse activity line."""
+        try:
+            snap = dhcp_mod.lease_snapshot(max_events=20)
+        except Exception:
+            self.dhcp_leases.setVisible(False)
+            return
+        active = snap.active
+        recent = snap.recent
+        if not active and not recent:
+            self.dhcp_leases.setText(
+                "Waiting for clients… (DISCOVER / REQUEST / ACK events appear here)"
+            )
+            self.dhcp_leases.setStyleSheet(
+                f"color: {theme.TEXT_MUTED}; font-size: 11px;"
+            )
+            self.dhcp_leases.setVisible(True)
+            return
+        lines = [f"{len(active)} active lease(s)"]
+        # Show up to 3 most recently touched leases, newest first. We pull
+        # "newest event per MAC" from `recent` rather than the dict ordering.
+        seen_macs: set[str] = set()
+        latest: list[tuple[str, str, str]] = []  # (ip, mac, host)
+        for ev in recent:
+            if not ev.mac or ev.mac in seen_macs:
+                continue
+            if ev.mac not in active:
+                continue
+            seen_macs.add(ev.mac)
+            lease = active[ev.mac]
+            host = f" ({lease.hostname})" if lease.hostname else ""
+            latest.append((lease.ip, ev.mac.lower(), host))
+            if len(latest) >= 3:
+                break
+        for ip, mac, host in latest:
+            lines.append(f"· {ip}  →  {mac}{host}")
+        self.dhcp_leases.setText("\n".join(lines))
+        self.dhcp_leases.setStyleSheet(
+            f"color: {theme.TEXT_BODY}; font-size: 11px;"
+        )
+        self.dhcp_leases.setVisible(True)
+
     def _refresh_dhcp_ui(self):
         running = dhcp_mod.is_running()
         cfg = self.config.dhcp
@@ -794,6 +915,7 @@ class Popup(QWidget):
             self.dhcp_status.setStyleSheet(
                 f"color: {theme.TEXT_BODY}; font-size: 11px;"
             )
+            self._refresh_dhcp_leases()
         elif cfg.range_start and cfg.range_end:
             self._set_led(self.dhcp_led, theme.TEXT_MUTED)
             self.dhcp_chip.setText("READY")
@@ -804,6 +926,7 @@ class Popup(QWidget):
             self.dhcp_status.setStyleSheet(
                 f"color: {theme.TEXT_MUTED}; font-size: 11px;"
             )
+            self.dhcp_leases.setVisible(False)
         else:
             self._set_led(self.dhcp_led, theme.WARNING)
             self.dhcp_chip.setText("SETUP")
@@ -816,6 +939,7 @@ class Popup(QWidget):
             self.dhcp_status.setStyleSheet(
                 f"color: {theme.WARNING}; font-size: 11px;"
             )
+            self.dhcp_leases.setVisible(False)
 
     # ---- show / hide ----
     def show_anchored(self):

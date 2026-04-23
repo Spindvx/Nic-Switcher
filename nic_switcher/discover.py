@@ -25,22 +25,59 @@ OUI_DB: dict[str, tuple[str, str]] = {
     # --- Pro AV cores / DSPs / control ---
     "006074": ("QSC Audio (Q-SYS)", "qsys"),
     "00907F": ("QSC Audio", "qsys"),
+    "0090D5": ("QSC Audio", "qsys"),
     "00107F": ("Crestron Electronics", "crestron"),
     "0050C2": ("Crestron Electronics", "crestron"),
     "C44A56": ("Crestron Electronics", "crestron"),
+    "00900B": ("Crestron", "crestron"),
     "00905E": ("Biamp Systems (Tesira)", "biamp"),
     "F04A2B": ("Biamp Systems", "biamp"),
+    "B4994C": ("Biamp Systems", "biamp"),
     "0005A6": ("Extron Electronics", "extron"),
     "000B8C": ("Extron", "extron"),
     "001DC1": ("Extron", "extron"),
+    "0020C2": ("Extron", "extron"),
     "001B92": ("AMX LLC", "amx"),
     "0000AF": ("AMX", "amx"),
+    "9CC9EB": ("AMX (Harman)", "amx"),
     "000EDD": ("Shure Incorporated", "shure"),
     "3CA72B": ("Shure", "shure"),
+    "0025D1": ("Shure", "shure"),
     "000CCC": ("Lab X Tech (Dante)", "dante"),
     "00A07E": ("Audinate (Dante)", "dante"),
     "4C3C16": ("Audinate (Dante)", "dante"),
+    "00101C": ("Audinate (Dante)", "dante"),
+    "00BD3A": ("Audinate (Dante)", "dante"),
+    "04E536": ("Audinate (Dante)", "dante"),
     "0013E8": ("ClearOne", "clearone"),
+    "00B33D": ("ClearOne", "clearone"),
+    # Additional AV manufacturers
+    "0002C7": ("Yamaha (Dante/AV)", "yamaha"),
+    "001DC1": ("Extron", "extron"),
+    "00036B": ("Cisco (TelePresence)", "videoconf"),
+    "001B21": ("Intel (NUC/AV hosts)", "host"),
+    "001E67": ("Intel (NUC/AV hosts)", "host"),
+    "001320": ("Tandberg (Cisco VC)", "videoconf"),
+    "0050C2": ("Crestron (DM Series)", "crestron"),
+    "002272": ("Lightware Visual Engineering", "extron"),
+    "001A8A": ("Samsung (signage)", "display"),
+    "1C06B2": ("Kramer Electronics", "extron"),
+    "001641": ("Polycom / Poly", "videoconf"),
+    "0004F2": ("Polycom", "videoconf"),
+    "64167F": ("Poly (HP)", "videoconf"),
+    "002F72": ("Cisco Webex Room", "videoconf"),
+    "B0286C": ("Cisco Webex", "videoconf"),
+    "000FBB": ("NEC (displays)", "display"),
+    "0050E4": ("Panasonic (AV)", "display"),
+    "00036A": ("BARCO (projection)", "display"),
+    "001A90": ("Barco", "display"),
+    "001B21": ("Intel", "host"),
+    "005B91": ("Atlona (audio/video)", "extron"),
+    "24A42C": ("Sony (AV)", "display"),
+    "000B1F": ("Sony (PTZ cameras)", "camera"),
+    "003064": ("Cisco (VC)", "videoconf"),
+    "000DBD": ("Lifesize (videoconf)", "videoconf"),
+    "002201": ("Logitech Video", "videoconf"),
     "00095B": ("NETGEAR", "switch"),
     "28C68E": ("NETGEAR", "switch"),
     "B03956": ("NETGEAR", "switch"),
@@ -231,11 +268,27 @@ def mdns_probe(bind_ip: str, questions: Optional[list[str]] = None) -> None:
     the Sniffer picks replies up from the raw socket.
     """
     qs = questions or [
+        # Universal meta-query: asks for all registered services.
         "_services._dns-sd._udp.local",
+        # Pro AV cores & control
         "_qsys._tcp.local",
+        "_qsys-ctrl._tcp.local",
         "_crestron._tcp.local",
         "_biamp-tesira._tcp.local",
+        "_tesira._tcp.local",
         "_axia-livewire._tcp.local",
+        # Dante (all Audinate service names)
+        "_netaudio-arc._udp.local",
+        "_netaudio-chan._udp.local",
+        "_netaudio-cmc._udp.local",
+        "_netaudio-dbc._udp.local",
+        # Shure
+        "_shure-dcs._tcp.local",
+        "_shure-audio._tcp.local",
+        # Video conferencing
+        "_cisco-phone._tcp.local",
+        "_polycom._tcp.local",
+        # Generic
         "_workstation._tcp.local",
         "_http._tcp.local",
     ]
@@ -281,12 +334,32 @@ PORT_KIND: dict[tuple[str, int], str] = {
 
 # mDNS service substrings observed in UDP 5353 payloads.
 MDNS_KIND: list[tuple[bytes, str]] = [
+    # --- Pro AV (priority) ---
     (b"_qsys._tcp", "qsys"),
     (b"_qsc._tcp", "qsys"),
+    (b"_qsys-ctrl", "qsys"),
     (b"_crestron", "crestron"),
     (b"_biamp-tesira", "biamp"),
     (b"_tesira", "biamp"),
+    (b"_avahi-tesira", "biamp"),
     (b"_axia-livewire", "livewire"),
+    # Dante — all Audinate service names
+    (b"_netaudio-arc", "dante"),
+    (b"_netaudio-chan", "dante"),
+    (b"_netaudio-cmc", "dante"),
+    (b"_netaudio-dbc", "dante"),
+    (b"_netaudio", "dante"),
+    (b"_dante", "dante"),
+    # Video conferencing
+    (b"_cisco-phone", "videoconf"),
+    (b"_polycom", "videoconf"),
+    (b"_webex", "videoconf"),
+    # Control systems
+    (b"_shure-dcs", "shure"),
+    (b"_shure-audio", "shure"),
+    (b"_extron-cp", "extron"),
+    (b"_amx-axlink", "amx"),
+    # --- Consumer / generic (lower priority) ---
     (b"_airplay", "apple"),
     (b"_raop", "apple"),
     (b"_googlecast", "chromecast"),
@@ -294,15 +367,13 @@ MDNS_KIND: list[tuple[bytes, str]] = [
     (b"_ipp", "printer"),
     (b"_ssh._tcp", "ssh-host"),
     (b"_workstation", "host"),
-    (b"_dante", "dante"),
-    (b"_netaudio", "dante"),
 ]
 
 KIND_LABEL = {
-    "qsys": "Q-SYS peripheral",
+    "qsys": "Q-SYS",
     "crestron": "Crestron",
     "biamp": "Biamp Tesira",
-    "dante": "Dante device",
+    "dante": "Dante",
     "extron": "Extron",
     "amx": "AMX",
     "shure": "Shure",
@@ -317,7 +388,22 @@ KIND_LABEL = {
     "host": "Host",
     "ssh-host": "SSH host",
     "livewire": "Axia Livewire",
+    "videoconf": "Video Conf",
+    "display": "Display/Projector",
+    "camera": "Camera",
+    "yamaha": "Yamaha Audio",
 }
+
+# Kinds that are Pro AV devices, for UI grouping + prioritization.
+AV_KINDS = frozenset({
+    "qsys", "crestron", "biamp", "dante", "extron", "amx", "shure",
+    "clearone", "lutron", "solstice", "livewire", "videoconf", "display",
+    "camera", "yamaha",
+})
+
+
+def is_av(kind: Optional[str]) -> bool:
+    return kind in AV_KINDS
 
 
 def kind_label(kind: Optional[str]) -> str:
@@ -360,6 +446,91 @@ def infer_kind(dev: Device) -> Optional[str]:
     if dev.is_gateway:
         return "gateway"
     return None
+
+
+# ---------------------------------------------------------------------------
+# Hostname resolution — reverse DNS + NetBIOS NBSTAT (UDP 137).
+# ---------------------------------------------------------------------------
+#
+# Reverse DNS hits the system resolver (DNS server + hosts file). For local
+# networks that don't have PTR records populated, we fall back to NetBIOS:
+# sending a NBSTAT "*" query and parsing the response yields the device's
+# Windows computer name even without any DNS infrastructure.
+
+def _reverse_dns(ip: str, timeout: float = 0.5) -> Optional[str]:
+    """Reverse-DNS an IP. Returns the short hostname (first label) or None."""
+    old = socket.getdefaulttimeout()
+    try:
+        socket.setdefaulttimeout(timeout)
+        host, _aliases, _addrs = socket.gethostbyaddr(ip)
+    except (socket.herror, socket.gaierror, OSError):
+        return None
+    finally:
+        socket.setdefaulttimeout(old)
+    if not host:
+        return None
+    return host.split(".", 1)[0]
+
+
+# NetBIOS-encoded "*" (wildcard) padded to 16 chars — the NBSTAT wildcard
+# name. Each nibble is offset by 'A' (0x41).
+_NB_WILDCARD = b"CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+
+def _nbstat(ip: str, timeout: float = 0.5) -> Optional[str]:
+    """Ask `ip:137` for its NetBIOS name table and return the workstation
+    name (suffix 0x00). None if the host doesn't answer or isn't running
+    NetBIOS-over-TCP/IP (most non-Windows hosts don't)."""
+    # Build the NBSTAT query by parts so the mix of literal + "* 3" + variable
+    # interpolation doesn't trip Python's implicit-string-concat rule.
+    header = (
+        b"\x12\x34"              # transaction id — arbitrary
+        b"\x00\x00"              # flags: standard query, not broadcast
+        b"\x00\x01"              # QDCOUNT = 1
+        + (b"\x00\x00" * 3)      # ANCOUNT/NSCOUNT/ARCOUNT = 0
+    )
+    name_field = b"\x20" + _NB_WILDCARD + b"\x00"  # encoded wildcard name
+    trailer = b"\x00\x21" + b"\x00\x01"             # QTYPE=NBSTAT, QCLASS=IN
+    query = header + name_field + trailer
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(timeout)
+        s.sendto(query, (ip, 137))
+        data, _ = s.recvfrom(1024)
+        s.close()
+    except (OSError, socket.timeout):
+        return None
+
+    # Header(12) + AnswerName(34) + Type(2) + Class(2) + TTL(4) + RDLEN(2) = 56
+    if len(data) < 57:
+        return None
+    num_names = data[56]
+    off = 57
+    best = None
+    for _ in range(num_names):
+        if off + 18 > len(data):
+            break
+        name = data[off:off + 15].rstrip(b" \x00").decode("ascii", "ignore")
+        suffix = data[off + 15]
+        flags = int.from_bytes(data[off + 16:off + 18], "big")
+        is_group = bool(flags & 0x8000)
+        off += 18
+        if not name or name == "__MSBROWSE__":
+            continue
+        # Suffix 0x00 is the workstation service — that's the one we want.
+        if suffix == 0x00 and not is_group:
+            return name
+        if best is None and not is_group:
+            best = name
+    return best
+
+
+def resolve_hostname(ip: str) -> Optional[str]:
+    """Best-effort hostname: reverse DNS first, then NetBIOS."""
+    host = _reverse_dns(ip)
+    if host and host != ip:
+        return host
+    return _nbstat(ip)
 
 
 def default_gateway_for(bind_ip: str) -> Optional[str]:

@@ -7,12 +7,12 @@ from typing import Optional
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
+    QCheckBox, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from . import discover, icons, theme
-from .discover import Device, kind_label
+from . import dante, discover, icons, theme
+from .discover import Device, is_av, kind_label
 from .sniffer import Sniffer
 from .theme import KIND_COLORS, STYLE
 
@@ -186,6 +186,9 @@ class ScanDialog(QDialog):
         self.bind_ip = bind_ip
         self._closed = False
         self.probe_status.connect(self._on_probe_status)
+        # Dante browser runs for the lifetime of this dialog.
+        self._dante = dante.DanteBrowser(on_update=self._on_dante_update)
+        self._dante_available, self._dante_err = self._dante.available()
 
         self.setWindowTitle("Network Scan — NIC Switcher")
         self.resize(620, 680)
@@ -206,9 +209,15 @@ class ScanDialog(QDialog):
         self.sniff_chip = QLabel("IDLE")
         self.sniff_chip.setObjectName("pill")
 
+        self.av_only = QCheckBox("AV only")
+        self.av_only.setChecked(True)
+        self.av_only.setToolTip("Show Q-SYS, Crestron, Biamp, Dante, etc. — hide hosts/laptops/printers")
+        self.av_only.stateChanged.connect(self._mark_dirty)
+
         header = QHBoxLayout()
         header.addLayout(title_col)
         header.addStretch(1)
+        header.addWidget(self.av_only)
         header.addWidget(self.sniff_chip)
 
         # Stat strip
@@ -320,12 +329,37 @@ class ScanDialog(QDialog):
         self._update_sniff_chip()
         self._refresh()
 
+        # Kick off Dante mDNS browsing in the background.
+        if self._dante_available:
+            started, msg = self._dante.start()
+            if started:
+                self._set_status(msg, "ok")
+            else:
+                self._set_status(f"Dante: {msg}", "warn")
+        else:
+            self._set_status(
+                f"Dante discovery unavailable: {self._dante_err}", "warn"
+            )
+
     # ---- lifecycle ----
     def closeEvent(self, e):
         self._closed = True
         self.sniffer.on_update = None
         self._timer.stop()
+        try:
+            self._dante.stop()
+        except Exception:
+            pass
         super().closeEvent(e)
+
+    def _on_dante_update(self, dante_devs: dict):
+        """Zeroconf callback — fires on the zeroconf thread. Merge into the
+        sniffer's device table; the Qt timer picks up the new data on the UI
+        thread at the next refresh tick."""
+        try:
+            self.sniffer.merge_dante(dante_devs)
+        except Exception:
+            pass
 
     def _mark_dirty(self):
         self._dirty = True
@@ -443,7 +477,46 @@ class ScanDialog(QDialog):
             self.list_layout.insertWidget(0, empty)
             return
 
-        for dev in devs:
-            row = DeviceRow(dev, self.sniffer)
-            row.use_subnet.connect(self.apply_subnet)
-            self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+        # Split into AV and Other so we can render section headers.
+        av_devs = [d for d in devs if is_av(d.kind) or d.is_gateway]
+        other_devs = [d for d in devs if not (is_av(d.kind) or d.is_gateway)]
+
+        if self.av_only.isChecked():
+            other_devs = []
+
+        if av_devs:
+            self._insert_section("PRO AV", f"{len(av_devs)} device(s)")
+            for dev in av_devs:
+                row = DeviceRow(dev, self.sniffer)
+                row.use_subnet.connect(self.apply_subnet)
+                self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+        if other_devs:
+            self._insert_section("OTHER", f"{len(other_devs)} device(s)")
+            for dev in other_devs:
+                row = DeviceRow(dev, self.sniffer)
+                row.use_subnet.connect(self.apply_subnet)
+                self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+        if not av_devs and not other_devs and self.av_only.isChecked():
+            hint = QLabel(
+                "No Pro AV devices detected yet. Hit Probe or uncheck 'AV only' "
+                "to see all hosts."
+            )
+            hint.setObjectName("subtle")
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            hint.setContentsMargins(0, 30, 0, 30)
+            hint.setWordWrap(True)
+            self.list_layout.insertWidget(self.list_layout.count() - 1, hint)
+
+    def _insert_section(self, title: str, count_text: str):
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(2, 10, 2, 2)
+        lay.setSpacing(8)
+        lbl = QLabel(title)
+        lbl.setObjectName("section")
+        cnt = QLabel(count_text)
+        cnt.setObjectName("subtle")
+        lay.addWidget(lbl)
+        lay.addStretch(1)
+        lay.addWidget(cnt)
+        self.list_layout.insertWidget(self.list_layout.count() - 1, row)

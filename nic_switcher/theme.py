@@ -50,12 +50,21 @@ KIND_COLORS = {
     "extron":   "#ffaf5b",
     "amx":      "#c792ea",
     "shure":    "#ff9499",
+    "clearone": "#ff9499",
+    "lutron":   "#ffc266",
+    "solstice": "#7de3ff",
+    "livewire": "#ffd479",
+    "videoconf":"#f67ac5",
+    "display":  "#ffae6a",
+    "camera":   "#f67ac5",
+    "yamaha":   "#ffd479",
     "switch":   "#a0b0ff",
     "gateway":  "#ffd479",
     "apple":    "#d0d4dc",
     "host":     "#8a8d9a",
     "printer":  "#9aa0ae",
     "chromecast":"#ff9499",
+    "ssh-host": "#a0b0ff",
 }
 
 
