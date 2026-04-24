@@ -330,7 +330,9 @@ def hardware_mac(nic_name: str) -> Optional[str]:
 
     Uses PowerShell's Get-NetAdapter.PermanentAddress. PowerShell is shipped
     with every supported Windows version, so this doesn't add a dependency.
-    Result is cached per-NIC for the process lifetime.
+    Result (including failures) is cached per-NIC for the process lifetime —
+    a slow PowerShell spawn (Defender scanning a fresh process can push it
+    past 5s on some boxes) gets paid at most once per NIC per session.
     """
     if nic_name in _HARDWARE_MAC_CACHE:
         return _HARDWARE_MAC_CACHE[nic_name]
@@ -345,9 +347,12 @@ def hardware_mac(nic_name: str) -> Optional[str]:
             creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None  # don't cache transient failures
+        # Cache the failure too — re-paying the timeout on every popup
+        # refresh would freeze the UI for seconds at a time.
+        _HARDWARE_MAC_CACHE[nic_name] = None
+        return None
     if proc.returncode != 0:
-        _HARDWARE_MAC_CACHE[nic_name] = None  # cache "not available"
+        _HARDWARE_MAC_CACHE[nic_name] = None
         return None
     result = normalize_mac(proc.stdout.strip())
     _HARDWARE_MAC_CACHE[nic_name] = result
