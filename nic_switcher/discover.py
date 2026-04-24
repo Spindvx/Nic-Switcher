@@ -18,122 +18,144 @@ from typing import Optional
 CREATE_NO_WINDOW = 0x08000000
 
 # ---------------------------------------------------------------------------
-# OUI table — curated for pro AV + common network gear.
-# Format: first 3 bytes of MAC (uppercase, no separators) -> (vendor, kind)
+# OUI table — curated for Pro AV, network infrastructure, and common
+# workstation/IoT vendors.
+#
+# Source format: vendor name -> (kind, "OUI1 OUI2 OUI3 ...") where each OUI
+# is the first 3 bytes of the MAC (uppercase, no separators). One line per
+# manufacturer keeps the table wide without exploding in length — to add a
+# vendor, append a single row. The runtime lookup dict is built once at
+# import time by `_build_oui_db` below.
 # ---------------------------------------------------------------------------
-OUI_DB: dict[str, tuple[str, str]] = {
-    # --- Pro AV cores / DSPs / control ---
-    "006074": ("QSC Audio (Q-SYS)", "qsys"),
-    "00907F": ("QSC Audio", "qsys"),
-    "0090D5": ("QSC Audio", "qsys"),
-    "00107F": ("Crestron Electronics", "crestron"),
-    "0050C2": ("Crestron Electronics", "crestron"),
-    "C44A56": ("Crestron Electronics", "crestron"),
-    "00900B": ("Crestron", "crestron"),
-    "00905E": ("Biamp Systems (Tesira)", "biamp"),
-    "F04A2B": ("Biamp Systems", "biamp"),
-    "B4994C": ("Biamp Systems", "biamp"),
-    "0005A6": ("Extron Electronics", "extron"),
-    "000B8C": ("Extron", "extron"),
-    "001DC1": ("Extron", "extron"),
-    "0020C2": ("Extron", "extron"),
-    "001B92": ("AMX LLC", "amx"),
-    "0000AF": ("AMX", "amx"),
-    "9CC9EB": ("AMX (Harman)", "amx"),
-    "000EDD": ("Shure Incorporated", "shure"),
-    "3CA72B": ("Shure", "shure"),
-    "0025D1": ("Shure", "shure"),
-    "000CCC": ("Lab X Tech (Dante)", "dante"),
-    "00A07E": ("Audinate (Dante)", "dante"),
-    "4C3C16": ("Audinate (Dante)", "dante"),
-    "00101C": ("Audinate (Dante)", "dante"),
-    "00BD3A": ("Audinate (Dante)", "dante"),
-    "04E536": ("Audinate (Dante)", "dante"),
-    "0013E8": ("ClearOne", "clearone"),
-    "00B33D": ("ClearOne", "clearone"),
-    # Additional AV manufacturers
-    "0002C7": ("Yamaha (Dante/AV)", "yamaha"),
-    "001DC1": ("Extron", "extron"),
-    "00036B": ("Cisco (TelePresence)", "videoconf"),
-    "001B21": ("Intel (NUC/AV hosts)", "host"),
-    "001E67": ("Intel (NUC/AV hosts)", "host"),
-    "001320": ("Tandberg (Cisco VC)", "videoconf"),
-    "0050C2": ("Crestron (DM Series)", "crestron"),
-    "002272": ("Lightware Visual Engineering", "extron"),
-    "001A8A": ("Samsung (signage)", "display"),
-    "1C06B2": ("Kramer Electronics", "extron"),
-    "001641": ("Polycom / Poly", "videoconf"),
-    "0004F2": ("Polycom", "videoconf"),
-    "64167F": ("Poly (HP)", "videoconf"),
-    "002F72": ("Cisco Webex Room", "videoconf"),
-    "B0286C": ("Cisco Webex", "videoconf"),
-    "000FBB": ("NEC (displays)", "display"),
-    "0050E4": ("Panasonic (AV)", "display"),
-    "00036A": ("BARCO (projection)", "display"),
-    "001A90": ("Barco", "display"),
-    "001B21": ("Intel", "host"),
-    "005B91": ("Atlona (audio/video)", "extron"),
-    "24A42C": ("Sony (AV)", "display"),
-    "000B1F": ("Sony (PTZ cameras)", "camera"),
-    "003064": ("Cisco (VC)", "videoconf"),
-    "000DBD": ("Lifesize (videoconf)", "videoconf"),
-    "002201": ("Logitech Video", "videoconf"),
-    "00095B": ("NETGEAR", "switch"),
-    "28C68E": ("NETGEAR", "switch"),
-    "B03956": ("NETGEAR", "switch"),
-    "001B48": ("Lutron Electronics", "lutron"),
-    "08EA40": ("Lutron", "lutron"),
-    "001D3D": ("Mersive (Solstice)", "solstice"),
+_OUI_GROUPS: dict[str, tuple[str, str]] = {
+    # ── Pro AV — DSPs, cores, control, audio ──
+    "QSC Audio (Q-SYS)":        ("qsys",      "006074 00907F 0090D5"),
+    "Crestron Electronics":     ("crestron",  "00107F 0050C2 C44A56 00900B"),
+    "Biamp Systems":            ("biamp",     "00905E F04A2B B4994C"),
+    "Audinate (Dante)":         ("dante",     "00A07E 4C3C16 00101C 00BD3A 04E536 000CCC"),
+    "Extron Electronics":       ("extron",    "0005A6 000B8C 001DC1 0020C2"),
+    "AMX (Harman)":             ("amx",       "001B92 0000AF 9CC9EB"),
+    "Shure":                    ("shure",     "000EDD 3CA72B 0025D1 9C8275"),
+    "Sennheiser":               ("shure",     "00029A 1859F5"),
+    "ClearOne":                 ("clearone",  "0013E8 00B33D"),
+    "Lutron Electronics":       ("lutron",    "001B48 08EA40"),
+    "Mersive (Solstice)":       ("solstice",  "001D3D"),
+    "Yamaha (Audio)":           ("yamaha",    "0002C7 00A0DE"),
+    "Lightware":                ("extron",    "002272"),
+    "Kramer Electronics":       ("extron",    "1C06B2"),
+    "Atlona":                   ("extron",    "005B91"),
 
-    # --- Switches / network infra ---
-    "000142": ("Cisco", "switch"),
-    "000163": ("Cisco", "switch"),
-    "00E04C": ("Realtek", "host"),
-    "FCFBFB": ("Cisco", "switch"),
-    "001795": ("Cisco", "switch"),
-    "001759": ("Cisco", "switch"),
-    "3C0E23": ("Cisco", "switch"),
-    "00E0C6": ("Cisco", "switch"),
-    "001A1E": ("Aruba Networks (HPE)", "switch"),
-    "3CA82A": ("Aruba Networks", "switch"),
-    "94B40F": ("Aruba Networks", "switch"),
-    "20A6CD": ("Aruba", "switch"),
-    "000496": ("Extreme Networks", "switch"),
-    "00E02B": ("Extreme Networks", "switch"),
-    "000585": ("Juniper Networks", "switch"),
-    "00121E": ("Juniper", "switch"),
-    "0418D6": ("Ubiquiti", "switch"),
-    "245A4C": ("Ubiquiti", "switch"),
-    "44D9E7": ("Ubiquiti", "switch"),
-    "F09FC2": ("Ubiquiti", "switch"),
-    "78BEB6": ("Ubiquiti", "switch"),
-    "F0AD4E": ("Microchip (many)", "host"),
-    "0001E6": ("HP", "switch"),
-    "0002A5": ("HP", "switch"),
-    "0004EA": ("HP", "switch"),
-    "3C2C30": ("Ruckus Wireless", "switch"),
-    "C0742B": ("Ruckus", "switch"),
+    # ── Video conferencing / IP phones ──
+    "Cisco TelePresence/Webex": ("videoconf", "00036B 002F72 B0286C 003064"),
+    "Polycom / Poly":           ("videoconf", "001641 0004F2 64167F"),
+    "Logitech (Video)":         ("videoconf", "002201 88E625 00306D 4473D6"),
+    "Lifesize":                 ("videoconf", "000DBD"),
+    "Tandberg":                 ("videoconf", "001320"),
+    "AVer Information":         ("videoconf", "003E64 ECD16E"),
 
-    # --- Common hosts ---
-    "000C29": ("VMware", "host"),
-    "005056": ("VMware", "host"),
-    "001B21": ("Intel", "host"),
-    "001517": ("Intel", "host"),
-    "94B86D": ("Intel", "host"),
-    "D8BBC1": ("Intel", "host"),
-    "000874": ("Dell", "host"),
-    "00065B": ("Dell", "host"),
-    "00215A": ("HP", "host"),
-    "F0921C": ("HP", "host"),
-    "001E8C": ("ASUSTek", "host"),
-    "10F60A": ("Apple", "host"),
-    "3C15C2": ("Apple", "host"),
-    "BCD074": ("Apple", "host"),
-    "B827EB": ("Raspberry Pi", "host"),
-    "DCA632": ("Raspberry Pi", "host"),
-    "E45F01": ("Raspberry Pi", "host"),
-    "4473D6": ("Logitech", "host"),
+    # ── Displays / projectors / signage ──
+    "Samsung":                  ("display",   "001A8A 002566 0050BA 002378"),
+    "LG":                       ("display",   "00266E 0050BD 700627"),
+    "NEC Display":               ("display",  "000FBB 8038FD"),
+    "Panasonic AV":             ("display",   "0050E4 0080F0 002022"),
+    "Sony AV":                  ("display",   "24A42C 7C30E0"),
+    "Barco":                    ("display",   "00036A 001A90"),
+    "Christie":                 ("display",   "00C094"),
+    "Epson":                    ("display",   "0026AB 5847CA 64EB8C"),
+    "BenQ":                     ("display",   "001E58 00C09F"),
+    "Sharp":                    ("display",   "0080CC 5C497D"),
+    "ViewSonic":                ("display",   "002438 90A4DE"),
+
+    # ── Cameras (PTZ / streaming / IP security) ──
+    "Sony PTZ":                 ("camera",    "000B1F"),
+    "Vaddio":                   ("camera",    "00197F 245CFC"),
+    "Panasonic AW":             ("camera",    "00B0D0"),
+    "Axis Communications":      ("camera",    "00408C ACCC8E B8A44F"),
+    "Hikvision":                ("camera",    "44190B 28571C BC9B5E"),
+    "Dahua":                    ("camera",    "3C1A57 4C11BF 90020A"),
+
+    # ── Workstations / laptops / desktops ──
+    "Dell":                     ("host",      "000874 00065B 00188B 1866DA F4521D 78AB60 8030E0"),
+    "HP / HPE":                 ("host",      "00215A F0921C 0011B0 6CB311 9457A5 70F39C"),
+    "Lenovo":                   ("host",      "FC01CD A4B197 D0F4F7 88A4C2 14ABC5 EC2E98 A48830"),
+    "Apple":                    ("host",      "10F60A 3C15C2 BCD074 040CCE 0CBC9F D023DB"),
+    "Asus":                     ("host",      "001E8C 1C872C 9C5C8E AC9E17 0411E5"),
+    "Acer":                     ("host",      "000034 0023A0 1881D5 D850E6"),
+    "Microsoft Surface/Xbox":   ("host",      "002248 1090C0 5C514F 70F1E5 7C1E52 50E54D"),
+    "MSI":                      ("host",      "001731 309C23 D43D7E"),
+    "Razer":                    ("host",      "C8E26C E4AAA0"),
+    "Toshiba":                  ("host",      "00A0D1 002708"),
+
+    # ── SBCs / IoT / makers ──
+    "Raspberry Pi":             ("host",      "B827EB DCA632 E45F01 D83ADD 28CDC1 2CCF67"),
+    "Espressif (ESP32/8266)":   ("host",      "240AC4 4C75BB 8CAAB5 A4CF12 BCDDC2"),
+    "Arduino":                  ("host",      "A8610A 90A2DA"),
+
+    # ── NIC chipsets / virtualization ──
+    "Intel":                    ("host",      "001B21 001517 94B86D D8BBC1 001E67 70665A 8C8590 7C7A91"),
+    "Realtek":                  ("host",      "00E04C 5C260A E03F49"),
+    "Broadcom":                 ("host",      "001018 D0D2B0"),
+    "Microchip":                ("host",      "F0AD4E"),
+    "VMware":                   ("host",      "000C29 005056"),
+    "Parallels":                ("host",      "001C42"),
+    "Oracle VirtualBox":        ("host",      "080027"),
+
+    # ── Network infrastructure (switches / routers / APs / firewalls) ──
+    "Cisco":                    ("switch",    "000142 000163 00E0C6 001795 001759 3C0E23 FCFBFB"),
+    "Aruba (HPE)":              ("switch",    "001A1E 3CA82A 94B40F 20A6CD 4007C7"),
+    "Juniper Networks":         ("switch",    "000585 00121E 7C950F"),
+    "Extreme Networks":         ("switch",    "000496 00E02B"),
+    "Ubiquiti":                 ("switch",    "0418D6 245A4C 44D9E7 F09FC2 78BEB6 802AA8 D80D17"),
+    "NETGEAR":                  ("switch",    "00095B 28C68E B03956 9C3DCF 04A151 000FB5"),
+    "MikroTik":                 ("switch",    "B86191 4C5E0C 6C3B6B"),
+    "TP-Link":                  ("switch",    "1027F5 60E327 9C5322 EC086B"),
+    "D-Link":                   ("switch",    "001195 002401 00179A FCAA14"),
+    "Ruckus Wireless":          ("switch",    "3C2C30 C0742B"),
+    "HP ProCurve":              ("switch",    "0001E6 0002A5 0004EA 001083"),
+    "Meraki (Cisco)":           ("switch",    "0018BA E0CB4E 88158D"),
+    "Fortinet":                 ("switch",    "00094F 70124B 90F35F"),
+
+    # ── Printers / MFPs ──
+    "HP Printer":               ("printer",   "001B78 002655 38EAA7"),
+    "Canon":                    ("printer",   "00BBCB 0090A9"),
+    "Brother":                  ("printer",   "0080F4 30055C"),
+    "Ricoh":                    ("printer",   "00266C 002673"),
+    "Epson Printer":            ("printer",   "640381 60634B 9C9C1F"),
+    "Xerox":                    ("printer",   "000048 080036 0000AA"),
+    "Kyocera":                  ("printer",   "00C0EE 003020"),
+    "Lexmark":                  ("printer",   "000400 002000 0021B7"),
+    "Konica Minolta":           ("printer",   "00204F 008087 002BB1"),
+
+    # ── Streaming / smart home / consumer AV ──
+    "Google (Chromecast/Nest)": ("chromecast","6CADF8 F4F5D8 F88FCA 1C5A3E"),
+    "Roku":                     ("chromecast","B0A737 D8311C 0826AE"),
+    "Amazon (Echo/Fire)":       ("chromecast","FCA667 78E103 4063B7 FCA183"),
+    "Sonos":                    ("apple",     "00079A 78283F B8E937"),
+    "Bose":                     ("apple",     "0020D8 488ED2"),
+
+    # ── Storage / NAS ──
+    "Synology":                 ("host",      "001132 00113263 0011326C"),
+    "QNAP":                     ("host",      "245EBE 246511"),
+    "Western Digital":          ("host",      "00145C"),
+    "NetApp":                   ("host",      "00A098 0090A4 002A6A"),
 }
+
+
+def _build_oui_db() -> dict[str, tuple[str, str]]:
+    """Expand `_OUI_GROUPS` to the runtime lookup table. Earlier declarations
+    win on prefix conflicts — order `_OUI_GROUPS` so the more informative
+    vendor (e.g. Crestron DM) appears before generic chipset vendors that
+    might share a block."""
+    db: dict[str, tuple[str, str]] = {}
+    for vendor, (kind, ouis) in _OUI_GROUPS.items():
+        for oui in ouis.split():
+            key = oui.upper()
+            if key not in db:
+                db[key] = (vendor, kind)
+    return db
+
+
+OUI_DB: dict[str, tuple[str, str]] = _build_oui_db()
 
 
 def oui_lookup(mac: str) -> tuple[Optional[str], Optional[str]]:

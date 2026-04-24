@@ -456,11 +456,11 @@ class Popup(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(10)
 
-        # Spindux branding
+        # Spindux branding — larger so it reads as a brand mark, not a label.
         brand = QLabel()
-        brand_pix = icons.brand_logo(22)
+        brand_pix = icons.brand_logo(38)
         brand.setPixmap(brand_pix)
-        brand.setFixedHeight(22)
+        brand.setFixedHeight(38)
         brand.setToolTip("Spindux Enterprise")
 
         hint = QLabel("Esc to close")
@@ -795,10 +795,11 @@ class Popup(QWidget):
             return
 
         if dhcp_mod.is_running():
-            # Stop path — also run off the UI thread (kill can take a second).
-            self._dhcp_busy = True
-            self.dhcp_toggle.setEnabled(False)
-            self.dhcp_toggle.setText("Stopping…")
+            # Stop path — keep button text as "Stop DHCP" the whole time
+            # (only the disabled state + status line signal the busy work).
+            # Changing button text during a click can leave a Qt repaint
+            # artifact that reads as a duplicated button on some boxes.
+            self._set_dhcp_busy(True)
             self._set_status("Stopping DHCP server…", "warn")
 
             def stop_worker():
@@ -826,9 +827,7 @@ class Popup(QWidget):
             return
 
         # Start path — firewall rules + orphan cleanup + probe takes ~3-5s.
-        self._dhcp_busy = True
-        self.dhcp_toggle.setEnabled(False)
-        self.dhcp_toggle.setText("Starting…")
+        self._set_dhcp_busy(True)
         self._set_status("Configuring firewall and launching dhcpsrv…", "warn")
 
         def start_worker():
@@ -840,9 +839,17 @@ class Popup(QWidget):
 
         threading.Thread(target=start_worker, daemon=True).start()
 
+    def _set_dhcp_busy(self, busy: bool):
+        """Single source of truth for the DHCP button enable/disable. Text is
+        owned by `_refresh_dhcp_ui`; this only toggles interactivity."""
+        self._dhcp_busy = busy
+        self.dhcp_toggle.setEnabled(not busy)
+        # Force a repaint so the button never carries over a stale frame after
+        # rapid disable/enable + text-change cycles.
+        self.dhcp_toggle.repaint()
+
     def _on_dhcp_done(self, ok: bool, msg: str):
-        self._dhcp_busy = False
-        self.dhcp_toggle.setEnabled(True)
+        self._set_dhcp_busy(False)
         self._set_status(msg, "ok" if ok else "err")
         self._refresh_dhcp_ui()
 
@@ -900,7 +907,11 @@ class Popup(QWidget):
     def _refresh_dhcp_ui(self):
         running = dhcp_mod.is_running()
         cfg = self.config.dhcp
-        self.dhcp_toggle.setText("Stop DHCP" if running else "Start DHCP")
+        new_text = "Stop DHCP" if running else "Start DHCP"
+        if self.dhcp_toggle.text() != new_text:
+            self.dhcp_toggle.setText(new_text)
+            # Defensive: flush pending paint before any layout change below.
+            self.dhcp_toggle.repaint()
         if running:
             self._set_led(self.dhcp_led, theme.SUCCESS)
             self.dhcp_chip.setText("LIVE")

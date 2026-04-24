@@ -217,10 +217,19 @@ def _delete_reg_mac(subkey_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _run_netsh(args: list[str], timeout: int = 20) -> tuple[int, str]:
-    proc = subprocess.run(
-        args, capture_output=True, text=True, timeout=timeout,
-        creationflags=CREATE_NO_WINDOW,
-    )
+    """Run netsh and return (rc, msg). A timeout or OSError is captured and
+    returned as rc=1 so callers (e.g. restart_adapter) can keep executing the
+    recovery path instead of letting the exception propagate and leave the
+    adapter disabled."""
+    try:
+        proc = subprocess.run(
+            args, capture_output=True, text=True, timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        return 1, f"netsh timed out after {timeout}s"
+    except OSError as e:
+        return 1, f"netsh failed to launch: {e}"
     return proc.returncode, ((proc.stderr or proc.stdout) or "").strip()
 
 
@@ -310,12 +319,21 @@ def current_mac(nic_name: str) -> Optional[str]:
     return None
 
 
+# Hardware MAC is invariant for the life of the adapter, so we memoize it
+# across calls. Each lookup spawns PowerShell (~150ms cold) — the popup's
+# refresh path can fire it many times per session, so caching matters.
+_HARDWARE_MAC_CACHE: dict[str, Optional[str]] = {}
+
+
 def hardware_mac(nic_name: str) -> Optional[str]:
     """The NIC's permanent (burned-in) MAC, bypassing any override.
 
     Uses PowerShell's Get-NetAdapter.PermanentAddress. PowerShell is shipped
     with every supported Windows version, so this doesn't add a dependency.
+    Result is cached per-NIC for the process lifetime.
     """
+    if nic_name in _HARDWARE_MAC_CACHE:
+        return _HARDWARE_MAC_CACHE[nic_name]
     try:
         proc = subprocess.run(
             [
@@ -327,10 +345,13 @@ def hardware_mac(nic_name: str) -> Optional[str]:
             creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return None  # don't cache transient failures
     if proc.returncode != 0:
+        _HARDWARE_MAC_CACHE[nic_name] = None  # cache "not available"
         return None
-    return normalize_mac(proc.stdout.strip())
+    result = normalize_mac(proc.stdout.strip())
+    _HARDWARE_MAC_CACHE[nic_name] = result
+    return result
 
 
 def set_mac(nic_name: str, mac: str) -> tuple[bool, str]:
