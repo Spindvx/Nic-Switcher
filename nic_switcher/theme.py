@@ -34,19 +34,22 @@ BORDER         = "rgba(255, 255, 255, 16)"
 BORDER_STRONG  = "rgba(255, 255, 255, 36)"
 BORDER_SUBTLE  = "rgba(255, 255, 255, 8)"
 
-# -- Accent (light pastel coral red) --
-ACCENT         = "#ff9aa2"   # main button / focus / link color
-ACCENT_HOVER   = "#ffb3b8"
-ACCENT_PRESS   = "#e88791"
-ACCENT_DIM     = "#7a4548"
-ACCENT_INK     = "#1a0507"   # dark crimson text on the pastel red bg
+# -- Accent (muted dusty pastel red) --
+# Toned down a step from the original #ff9aa2 — same hue family, lower
+# saturation + slightly darker so it reads as a soft accent rather than a
+# bright candy red on the deep black surface.
+ACCENT         = "#d8949a"   # main button / focus / link color
+ACCENT_HOVER   = "#e6a8ad"
+ACCENT_PRESS   = "#bd808a"
+ACCENT_DIM     = "#6e4448"
+ACCENT_INK     = "#170305"   # dark crimson text on the muted-red bg
 
-# -- Selected / "on" indicator (lighter pastel red glow) --
-# Used for: pin button when pinned, active preset card. Brighter and softer
-# than ACCENT so the "currently active" state pops without competing with
-# regular accent buttons.
-SELECT_GLOW       = "#ffc4c8"
-SELECT_GLOW_RGBA  = "rgba(255, 196, 200, 70)"  # soft halo for stylesheet
+# -- Selected / "on" indicator (lighter dusty pastel red glow) --
+# Used for: pin button when pinned, active preset card. Brighter than
+# ACCENT so the "currently active" state pops without competing with
+# regular accent buttons, but still in the muted family.
+SELECT_GLOW       = "#e6b3b7"
+SELECT_GLOW_RGBA  = "rgba(230, 179, 183, 70)"  # soft halo for stylesheet
 
 # -- Semantic --
 SUCCESS        = "#6de3a4"
