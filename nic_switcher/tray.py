@@ -61,11 +61,15 @@ class Tray(QSystemTrayIcon):
         if new is None and self.popup.isVisible():
             # User clicked away — but the click may have been on the tray icon
             # to toggle off, which is handled by _on_activated. Slight delay
-            # avoids racing with that toggle.
+            # avoids racing with that toggle. Pinned popups never auto-hide.
+            if self.popup.is_pinned():
+                return
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(150, self._maybe_hide)
 
     def _maybe_hide(self):
+        if self.popup.is_pinned():
+            return
         if self.popup.isVisible() and not self.popup.isActiveWindow():
             self.popup.hide_animated()
 

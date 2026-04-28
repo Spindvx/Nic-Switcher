@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+from typing import Optional
 
 from PyQt6.QtCore import (
     QEasingCurve, QPropertyAnimation, QSize, QTimer, Qt, pyqtSignal,
@@ -162,6 +163,8 @@ class Popup(QWidget):
         self._apply_busy = False
         self._dhcp_busy = False
         self._mac_busy = False
+        self._last_known_dhcp_running: Optional[bool] = None
+        self._pinned = False
         self.apply_done.connect(self._on_apply_done)
         self.dhcp_done.connect(self._on_dhcp_done)
         self.mac_done.connect(self._on_mac_done)
@@ -189,6 +192,22 @@ class Popup(QWidget):
         self._lease_timer.timeout.connect(self._lease_tick)
         self._lease_timer.start()
 
+    # ---- pin ----
+    def _toggle_pin(self, checked: bool):
+        self._pinned = checked
+        # Swap to a filled pin icon when active so the state reads at a glance.
+        color = theme.ACCENT if checked else theme.TEXT_SECOND
+        self.pin_btn.setIcon(icons.pin(14, color, filled=checked))
+        # Window flag tweak so OS focus changes can't drag the popup back to
+        # idle hide-on-blur — Tray._maybe_hide also respects self._pinned.
+        if checked:
+            self._set_status("Pinned — won't close on focus loss", "ok")
+        else:
+            self._set_status("Unpinned", "ok")
+
+    def is_pinned(self) -> bool:
+        return self._pinned
+
     # ---- chrome ----
     def showEvent(self, e):
         super().showEvent(e)
@@ -197,11 +216,13 @@ class Popup(QWidget):
             enable_blur(hwnd)
 
     def paintEvent(self, e):
+        # iOS-glass body: a deep near-black with reduced opacity so the
+        # underlying Mica blur reads through as the dominant tint.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
-        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 14, 14)
-        p.fillPath(path, QColor(18, 20, 28, 232))
+        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 18, 18)
+        p.fillPath(path, QColor(12, 14, 20, 215))
         p.end()
 
     def keyPressEvent(self, e):
@@ -242,6 +263,11 @@ class Popup(QWidget):
         self.status_label = QLabel("")
         self.status_label.setObjectName("statusOk")
 
+        self.pin_btn = _icon_button(icons.pin, "Pin — keep popup open when clicking away",
+                                     theme.TEXT_SECOND, 30, 14)
+        self.pin_btn.setCheckable(True)
+        self.pin_btn.toggled.connect(self._toggle_pin)
+
         close_btn = _icon_button(icons.close, "Close (Esc)", theme.TEXT_SECOND, 30, 14)
         close_btn.clicked.connect(self.hide_animated)
 
@@ -249,6 +275,7 @@ class Popup(QWidget):
         header.addLayout(title_col)
         header.addStretch(1)
         header.addWidget(self.status_label)
+        header.addWidget(self.pin_btn)
         header.addWidget(close_btn)
         layout.addLayout(header)
 
@@ -854,13 +881,21 @@ class Popup(QWidget):
         self._refresh_dhcp_ui()
 
     def _lease_tick(self):
-        # Tight no-op when hidden or DHCP isn't running — cheap and avoids
-        # file I/O + UI churn when nobody's watching.
+        # Tight no-op when hidden — file I/O + UI churn pointless when nobody
+        # is looking. When DHCP is running we refresh the whole DHCP UI (not
+        # just leases) so a process death is reflected within 2 seconds; when
+        # the popup hasn't seen running yet we still poll once so a server
+        # started via the tray menu surfaces here without the user having to
+        # interact.
         if not self.isVisible():
             return
-        if not dhcp_mod.is_running():
+        running = dhcp_mod.is_running()
+        if running != self._last_known_dhcp_running:
+            self._last_known_dhcp_running = running
+            self._refresh_dhcp_ui()
             return
-        self._refresh_dhcp_leases()
+        if running:
+            self._refresh_dhcp_leases()
 
     def _refresh_dhcp_leases(self):
         """Pull recent lease events and render a terse activity line."""
@@ -906,12 +941,13 @@ class Popup(QWidget):
 
     def _refresh_dhcp_ui(self):
         running = dhcp_mod.is_running()
+        self._last_known_dhcp_running = running
         cfg = self.config.dhcp
-        new_text = "Stop DHCP" if running else "Start DHCP"
-        if self.dhcp_toggle.text() != new_text:
-            self.dhcp_toggle.setText(new_text)
-            # Defensive: flush pending paint before any layout change below.
-            self.dhcp_toggle.repaint()
+        # Always re-set + repaint, even if the text looks unchanged. Skipping
+        # setText on equal text was an optimization that hid an actual bug
+        # where the chip and button could show inconsistent states.
+        self.dhcp_toggle.setText("Stop DHCP" if running else "Start DHCP")
+        self.dhcp_toggle.repaint()
         if running:
             self._set_led(self.dhcp_led, theme.SUCCESS)
             self.dhcp_chip.setText("LIVE")

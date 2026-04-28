@@ -8,8 +8,10 @@ from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
-    QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout,
+    QWidget,
 )
+from PyQt6.QtGui import QGuiApplication
 
 from . import dante, discover, icons, theme
 from .discover import Device, is_av, kind_label
@@ -58,6 +60,9 @@ class DeviceRow(QFrame):
         self.dev = dev
         self.sniffer = sniffer
         self.setObjectName("deviceCard")
+        # Right-click → quick copy menu (IP / MAC / hostname).
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
 
         color = KIND_COLORS.get(dev.kind or "host", theme.TEXT_MUTED)
 
@@ -171,6 +176,27 @@ class DeviceRow(QFrame):
                     break
         self.use_subnet.emit(f"{subnet}.{chosen or 250}", 24)
 
+    def _on_context_menu(self, pos):
+        menu = QMenu(self)
+        clip = QGuiApplication.clipboard()
+
+        def copy(text: str):
+            return lambda: clip.setText(text)
+
+        if self.dev.ip:
+            menu.addAction(f"Copy IP  ·  {self.dev.ip}", copy(self.dev.ip))
+        if self.dev.mac:
+            menu.addAction(f"Copy MAC  ·  {self.dev.mac}", copy(self.dev.mac))
+        if self.dev.hostname:
+            menu.addAction(f"Copy hostname  ·  {self.dev.hostname}",
+                           copy(self.dev.hostname))
+        if self.dev.vendor:
+            menu.addAction(f"Copy vendor  ·  {self.dev.vendor[:32]}",
+                           copy(self.dev.vendor))
+        menu.addSeparator()
+        menu.addAction("Use this subnet", self._emit_subnet)
+        menu.exec(self.mapToGlobal(pos))
+
 
 # ---------------------------------------------------------------------------
 # Scan dialog
@@ -233,6 +259,32 @@ class ScanDialog(QDialog):
         stat_row.addWidget(self.stat_pkt)
         stat_row.addWidget(self.stat_dev)
         stat_row.addWidget(self.stat_sub, 1)
+
+        # Search filter — instant text match against IP, MAC, hostname, vendor.
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search by IP, MAC, hostname, or vendor…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._mark_dirty)
+
+        # Auto-probe — periodic mDNS + ping sweep so the list stays fresh
+        # without the user mashing the Probe button.
+        self.auto_probe = QCheckBox("Auto-probe every 8s")
+        self.auto_probe.setToolTip(
+            "Re-fire mDNS broadcast + ping sweep every 8 seconds while open"
+        )
+        self.auto_probe.setChecked(False)
+        self._auto_probe_timer = QTimer(self)
+        self._auto_probe_timer.setInterval(8000)
+        self._auto_probe_timer.timeout.connect(self._auto_probe_tick)
+        self.auto_probe.toggled.connect(
+            lambda on: (self._auto_probe_timer.start() if on
+                        else self._auto_probe_timer.stop())
+        )
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        filter_row.addWidget(self.search, 1)
+        filter_row.addWidget(self.auto_probe)
 
         # Device list
         self.list_host = QWidget()
@@ -302,6 +354,7 @@ class ScanDialog(QDialog):
         body.setSpacing(10)
         body.addLayout(header)
         body.addLayout(stat_row)
+        body.addLayout(filter_row)
         body.addSpacing(2)
         body.addWidget(scroll, 1)
         body.addLayout(btn_row1)
@@ -347,10 +400,21 @@ class ScanDialog(QDialog):
         self.sniffer.on_update = None
         self._timer.stop()
         try:
+            self._auto_probe_timer.stop()
+        except Exception:
+            pass
+        try:
             self._dante.stop()
         except Exception:
             pass
         super().closeEvent(e)
+
+    def _auto_probe_tick(self):
+        """Periodic re-probe so the list freshens itself while open. Runs the
+        worker on a thread so the 96-way ping sweep doesn't block the UI."""
+        if self._closed or not self.bind_ip:
+            return
+        threading.Thread(target=self._probe_worker, daemon=True).start()
 
     def _on_dante_update(self, dante_devs: dict):
         """Zeroconf callback — fires on the zeroconf thread. Merge into the
@@ -476,6 +540,20 @@ class ScanDialog(QDialog):
             empty.setContentsMargins(0, 40, 0, 40)
             self.list_layout.insertWidget(0, empty)
             return
+
+        # Apply search filter first so AV/Other counts reflect the filter.
+        query = (self.search.text() or "").strip().lower()
+        if query:
+            def _match(d: Device) -> bool:
+                hay = " ".join([
+                    d.ip or "",
+                    (d.mac or "").lower(),
+                    (d.hostname or "").lower(),
+                    (d.vendor or "").lower(),
+                    (d.kind or ""),
+                ])
+                return query in hay
+            devs = [d for d in devs if _match(d)]
 
         # Split into AV and Other so we can render section headers.
         av_devs = [d for d in devs if is_av(d.kind) or d.is_gateway]

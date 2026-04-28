@@ -147,6 +147,43 @@ def trash(size: int = 16, color: str = "#d6d9e1") -> QIcon:
     return _stroked(draw, size, color, 1.4)
 
 
+def pin(size: int = 16, color: str = "#d6d9e1", filled: bool = False) -> QIcon:
+    """Pin icon — outline by default, filled when pinned/active."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.5)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    if filled:
+        p.setBrush(QBrush(QColor(color)))
+    else:
+        p.setBrush(Qt.BrushStyle.NoBrush)
+    # Pin head (rounded rect tilted slightly), shaft (line down to point).
+    cx = size / 2
+    head_top = size * 0.18
+    head_bottom = size * 0.55
+    head_w = size * 0.42
+    path = QPainterPath()
+    path.moveTo(cx - head_w / 2, head_top)
+    path.lineTo(cx + head_w / 2, head_top)
+    path.lineTo(cx + head_w / 2 - 1.0, head_bottom)
+    path.lineTo(cx - head_w / 2 + 1.0, head_bottom)
+    path.closeSubpath()
+    p.drawPath(path)
+    # Cross-bar at the bottom of the head
+    p.drawLine(QPointF(cx - size * 0.30, head_bottom),
+               QPointF(cx + size * 0.30, head_bottom))
+    # Shaft + point
+    p.drawLine(QPointF(cx, head_bottom + 0.6),
+               QPointF(cx, size * 0.86))
+    p.end()
+    return QIcon(pix)
+
+
 def chevron_down(size: int = 12, color: str = "#a7abb8") -> QIcon:
     def draw(p: QPainter, s: int, w: float):
         pad = s * 0.28
@@ -207,22 +244,23 @@ def dot(size: int = 10, color: str = "#6de3a4") -> QIcon:
 
 
 # -----------------------------------------------------------------------------
-# Brand logo — loads from resources/spindux-logo.png with a text
-# fallback if the file isn't present. Drop your PNG at that path to override.
+# Brand logo — loads from resources/connect-logo.png with a text fallback.
+# Swap the asset to rebrand without code changes.
 # -----------------------------------------------------------------------------
 
 def _brand_logo_paths() -> list[Path]:
     paths: list[Path] = []
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        paths.append(Path(meipass) / "resources" / "spindux-logo.png")
+        paths.append(Path(meipass) / "resources" / "connect-logo.png")
     here = Path(__file__).resolve().parent.parent
-    paths.append(here / "resources" / "spindux-logo.png")
+    paths.append(here / "resources" / "connect-logo.png")
     return paths
 
 
 def brand_logo(height: int = 22) -> QPixmap:
-    """Return the Spindux logo scaled to `height`. Falls back to a text render."""
+    """Return the Connect partner logo scaled to `height`. Falls back to a
+    text render if the asset is missing."""
     for p in _brand_logo_paths():
         if p.is_file():
             pm = QPixmap(str(p))
@@ -231,8 +269,7 @@ def brand_logo(height: int = 22) -> QPixmap:
                     height,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-    # Fallback: "SPINDUX" wordmark
-    aspect_width = int(height * 4.6)
+    aspect_width = int(height * 4.2)
     pix = QPixmap(aspect_width, height)
     pix.fill(Qt.GlobalColor.transparent)
     p = QPainter(pix)
@@ -240,10 +277,10 @@ def brand_logo(height: int = 22) -> QPixmap:
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
     font = QFont("Segoe UI", int(height * 0.58))
     font.setWeight(QFont.Weight.Black)
-    font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
+    font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 94)
     p.setFont(font)
-    p.setPen(QColor("#d6d9e1"))
-    p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "SPINDUX")
+    p.setPen(QColor("#d42730"))
+    p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "connect")
     p.end()
     return pix
 
