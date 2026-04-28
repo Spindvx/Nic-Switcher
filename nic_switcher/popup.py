@@ -220,14 +220,15 @@ class Popup(QWidget):
             enable_blur(hwnd)
 
     def paintEvent(self, e):
-        # Pure black glass body. Alpha 170 balances "white text stays
-        # legible" with "you can see the desktop tinting through". Lower
-        # to ~140 for more transparency, raise to ~210 for more solid.
+        # Solid near-black body. Mica/acrylic was unreliable on the user's
+        # machine, so we paint a fully opaque dark surface. Slight cool
+        # offset from pure black (10,12,16) so it sits cleanly next to
+        # the lighter inner card surfaces.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
-        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 18, 18)
-        p.fillPath(path, QColor(0, 0, 0, 170))
+        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 16, 16)
+        p.fillPath(path, QColor(10, 12, 16, 255))
         p.end()
 
     def keyPressEvent(self, e):
@@ -516,10 +517,13 @@ class Popup(QWidget):
         footer.addWidget(quit_btn)
         layout.addLayout(footer)
 
+        # Light shadow — just enough to lift the popup off the desktop
+        # without the heavy "modal dialog" look the previous radius/alpha
+        # gave it.
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(48)
-        shadow.setOffset(0, 14)
-        shadow.setColor(QColor(0, 0, 0, 200))
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 110))
         root.setGraphicsEffect(shadow)
 
     # ---- data refresh ----

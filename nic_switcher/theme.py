@@ -20,18 +20,19 @@ The popup's paintEvent in popup.py also has a hard-coded RGBA — search for
 # Design tokens — black glass + pastel red
 # ---------------------------------------------------------------------------
 
-# -- Surfaces — pure black haze, semi-transparent so Mica shows through --
-BG_DEEP        = "rgba(0, 0, 0, 180)"       # popup base — pure black haze
-BG_ROOT        = "rgba(0, 0, 0, 0)"         # transparent: popup paintEvent owns the tint so #root doesn't draw over Mica
-BG_CARD        = "rgba(255, 255, 255, 8)"   # subtle white "fill on glass" for cards/inputs
-BG_CARD_HOVER  = "rgba(255, 255, 255, 14)"
-BG_CARD_ACTIVE = "rgba(255, 255, 255, 22)"
-BG_CHIP        = "rgba(255, 255, 255, 12)"
+# -- Surfaces — solid black layered by tone (Mica wasn't reading through
+#    reliably on the user's box). Cards lift via subtle elevation, not glass. --
+BG_DEEP        = "#0a0c10"   # popup body — deepest black layer
+BG_ROOT        = "#0d1015"   # primary surface (#root container)
+BG_CARD        = "#15181f"   # cards / inputs — one tone lighter than root
+BG_CARD_HOVER  = "#1c1f27"
+BG_CARD_ACTIVE = "#23262f"
+BG_CHIP        = "#1a1d24"
 
-# -- Borders — minimal; surfaces separate via tone, not lines --
-BORDER         = "rgba(255, 255, 255, 14)"
-BORDER_STRONG  = "rgba(255, 255, 255, 30)"
-BORDER_SUBTLE  = "rgba(255, 255, 255, 6)"
+# -- Borders — visible but soft, 1px hairlines for elevation cues --
+BORDER         = "rgba(255, 255, 255, 16)"
+BORDER_STRONG  = "rgba(255, 255, 255, 36)"
+BORDER_SUBTLE  = "rgba(255, 255, 255, 8)"
 
 # -- Accent (light pastel coral red) --
 ACCENT         = "#ff9aa2"   # main button / focus / link color
@@ -106,7 +107,7 @@ QWidget {{
 
 #root {{
     background: {BG_ROOT};
-    border: 1px solid {BORDER_SUBTLE};
+    border: 1px solid {BORDER};
     border-radius: {RADIUS_LG}px;
 }}
 
@@ -150,10 +151,10 @@ QLabel#divider {{
     margin: 4px 0 4px 0;
 }}
 
-/* --------- inputs (iOS-style fill-on-glass) --------- */
+/* --------- inputs --------- */
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
     background: {BG_CARD};
-    border: 1px solid transparent;
+    border: 1px solid {BORDER};
     border-radius: {RADIUS_SM}px;
     padding: 8px 11px;
     color: {TEXT_PRIMARY};
@@ -162,6 +163,7 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
 }}
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover {{
     background: {BG_CARD_HOVER};
+    border-color: {BORDER_STRONG};
 }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
     border: 1px solid {ACCENT};
@@ -190,10 +192,10 @@ QComboBox QAbstractItemView::item {{
     min-height: 22px;
 }}
 
-/* --------- buttons (iOS pill-ish) --------- */
+/* --------- buttons --------- */
 QPushButton {{
     background: {BG_CARD};
-    border: 1px solid transparent;
+    border: 1px solid {BORDER};
     border-radius: {RADIUS_SM}px;
     padding: 8px 16px;
     color: {TEXT_PRIMARY};
@@ -201,13 +203,15 @@ QPushButton {{
 }}
 QPushButton:hover {{
     background: {BG_CARD_HOVER};
+    border-color: {BORDER_STRONG};
 }}
 QPushButton:pressed {{
     background: {BG_CARD_ACTIVE};
 }}
 QPushButton:disabled {{
     color: {TEXT_DIM};
-    background: rgba(255,255,255,3);
+    background: {BG_DEEP};
+    border-color: {BORDER_SUBTLE};
 }}
 
 QPushButton#accent {{
@@ -277,17 +281,18 @@ QPushButton#danger-ghost:hover {{
     background: rgba(255, 122, 133, 30);
 }}
 
-/* --------- preset / device cards (borderless, tone-only separation) --------- */
+/* --------- preset / device cards --------- */
 QFrame#presetCard, QFrame#deviceCard {{
     background: {BG_CARD};
-    border: 1px solid transparent;
+    border: 1px solid {BORDER};
     border-radius: {RADIUS_MD}px;
 }}
 QFrame#presetCard:hover, QFrame#deviceCard:hover {{
     background: {BG_CARD_HOVER};
+    border-color: {BORDER_STRONG};
 }}
 QFrame#presetCardActive {{
-    /* Active preset — soft pastel red halo + 1px glow border. */
+    /* Active preset — thin pastel-red border + faint glow background. */
     background: {SELECT_GLOW_RGBA};
     border: 1px solid {SELECT_GLOW};
     border-radius: {RADIUS_MD}px;

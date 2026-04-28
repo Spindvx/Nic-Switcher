@@ -59,26 +59,17 @@ class GlassDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setSizeGripEnabled(False)
 
-    # ── glass body ────────────────────────────────────────────────────
+    # ── solid-black body ───────────────────────────────────────────────
     def paintEvent(self, e):
-        # Pure black glass, same alpha as the main popup so dialogs and
-        # popup feel like one surface family. Tweak alpha for opacity.
+        # Solid near-black, same as the main popup so dialogs and popup
+        # read as one surface family. Adjust the QColor alpha here if you
+        # want translucency back later.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
-        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 18, 18)
-        p.fillPath(path, QColor(0, 0, 0, 170))
+        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 16, 16)
+        p.fillPath(path, QColor(10, 12, 16, 255))
         p.end()
-
-    def showEvent(self, e):
-        super().showEvent(e)
-        # Try Mica first, fall back to acrylic blur — same as the popup.
-        try:
-            hwnd = int(self.winId())
-            if not try_enable_mica(hwnd):
-                enable_blur(hwnd)
-        except Exception:
-            pass
 
     # ── drag-by-title-strip ───────────────────────────────────────────
     def mousePressEvent(self, e):
@@ -267,9 +258,9 @@ class PresetDialog(GlassDialog):
         outer.addWidget(root)
 
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(36)
-        shadow.setOffset(0, 10)
-        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 110))
         root.setGraphicsEffect(shadow)
 
     def _mac_randomize(self):
@@ -531,9 +522,9 @@ class DhcpDialog(GlassDialog):
         outer.addWidget(root)
 
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(36)
-        shadow.setOffset(0, 10)
-        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 110))
         root.setGraphicsEffect(shadow)
 
         # Trigger initial autofill if fields are blank

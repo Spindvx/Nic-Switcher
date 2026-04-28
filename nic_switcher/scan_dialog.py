@@ -383,9 +383,9 @@ class ScanDialog(GlassDialog):
         outer.addWidget(root)
 
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(36)
-        shadow.setOffset(0, 10)
-        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 110))
         root.setGraphicsEffect(shadow)
 
         # refresh pump
