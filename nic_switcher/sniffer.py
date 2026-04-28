@@ -392,30 +392,31 @@ class Sniffer:
                 #   1. Skip OUR OWN outgoing probes — the raw socket captures
                 #      packets we send, and substring-matching them would tag
                 #      our own machine as Q-SYS/Crestron/Biamp/etc.
-                #   2. Only match in mDNS RESPONSES (QR bit = 1). Queries can
-                #      legitimately contain service names without that service
-                #      being hosted on the source.
-                #   3. Match against the wire-encoded label form
-                #      (e.g. \x05_qsys\x04_tcp) instead of the dotted form
-                #      so we're matching the way mDNS actually serializes,
-                #      and random payload bytes can't accidentally contain
-                #      "_qsys" and trigger a false tag.
+                #   2. Match against the FIRST-LABEL wire form (e.g.
+                #      \x05_qsys). Real mDNS responses use DNS compression
+                #      (2-byte pointers), so the literal `_qsys._tcp` byte
+                #      sequence rarely appears intact — but the leading
+                #      label `\x05_qsys` is always uncompressed at the start
+                #      of the service name. The length prefix still defends
+                #      against random payload bytes triggering a false tag.
+                #
+                # We dropped the QR-bit gate: in practice it threw out almost
+                # every announcement on networks where AV gear uses compressed
+                # responses, killing Q-SYS / Crestron / Biamp detection. The
+                # remaining false-positive source (other hosts QUERYING for a
+                # service they don't host) is rare; the rest of the evidence
+                # scorer will downgrade those to '?' confidence anyway.
                 if (proto == 17 and (sport == 5353 or dport == 5353)
                         and len(data) > payload_off + 12
                         and src != self.bind_ip):
                     payload = data[payload_off:]
-                    flags_byte = payload[2] if len(payload) > 2 else 0
-                    is_response = bool(flags_byte & 0x80)
-                    if is_response:
-                        for needle, _kind in MDNS_KIND:
-                            if _wire_label(needle) in payload:
-                                dev = self.devices.get(src) if not _is_skip(src) else None
-                                if dev is not None:
-                                    dev.mdns_services.add(
-                                        needle.decode("ascii", "ignore")
-                                    )
-                    # Hostname extraction is safe even on queries (it grabs
-                    # the first .local label, not service-classification).
+                    for needle, _kind in MDNS_KIND:
+                        if _wire_first_label(needle) in payload:
+                            dev = self.devices.get(src) if not _is_skip(src) else None
+                            if dev is not None:
+                                dev.mdns_services.add(
+                                    needle.decode("ascii", "ignore")
+                                )
                     host = _extract_mdns_hostname(payload)
                     if host:
                         dev = self.devices.get(src) if not _is_skip(src) else None
@@ -432,18 +433,20 @@ class Sniffer:
             pass
 
 
-def _wire_label(dotted: bytes) -> bytes:
-    """Convert a dotted DNS name like b'_qsys._tcp' into the wire-encoded
-    label sequence b'\\x05_qsys\\x04_tcp'. Used to match service types in
-    mDNS payloads the way they're actually serialized — bare substring
-    matches against random bytes were the source of phantom Tesira tags.
+def _wire_first_label(dotted: bytes) -> bytes:
+    """First label of a DNS name with its length prefix: b'_qsys._tcp' ->
+    b'\\x05_qsys'. mDNS responses heavily use DNS compression for the
+    suffix part of names, so matching the FULL wire form misses most
+    real announcements. The first label is always uncompressed at the
+    start of a service-instance name and is unique enough for reliable
+    classification (length prefix + leading underscore make accidental
+    bare-substring matches in random bytes vanishingly unlikely).
     """
-    out = b""
-    for part in dotted.split(b"."):
-        if not part:
-            continue
-        out += bytes([len(part)]) + part
-    return out
+    parts = dotted.split(b".")
+    if not parts or not parts[0]:
+        return b""
+    first = parts[0]
+    return bytes([len(first)]) + first
 
 
 def _extract_mdns_hostname(payload: bytes) -> Optional[str]:

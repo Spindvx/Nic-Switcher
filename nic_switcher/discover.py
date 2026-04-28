@@ -458,12 +458,17 @@ class Device:
 # of Tesira false positives on devices that just happened to listen on
 # port 4455.
 _EV_MDNS_RESPONSE = 70   # device announced the service via mDNS — strong
-_EV_OUI           = 35   # MAC prefix matches a known vendor
+_EV_OUI           = 40   # MAC prefix matches a known vendor — strong on its own
 _EV_PORT          = 18   # one matching port — weak; need 2+ to classify alone
 _EV_HTTP_BANNER   = 70   # web GUI title/server header confirms vendor
 _EV_GATEWAY_FLAG  = 100  # we already know this is the gateway
 
-MIN_CONFIDENCE    = 40   # below this, leave kind=None rather than guess
+# OUI alone (40) is enough to classify with a tentative '?' badge in the
+# UI. A lone matching port (18) is below threshold so we don't tag a
+# device just because it listens on tcp/4455. Two ports (36) are also
+# below threshold — needs three for port-only classification, or any
+# port + OUI / mDNS / banner. OUI + mDNS / OUI + banner = clean (no '?').
+MIN_CONFIDENCE    = 40
 
 
 def infer_kind(dev: Device) -> tuple[Optional[str], int]:
