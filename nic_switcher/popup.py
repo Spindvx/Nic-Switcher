@@ -198,8 +198,9 @@ class Popup(QWidget):
     # ---- pin ----
     def _toggle_pin(self, checked: bool):
         self._pinned = checked
-        # Swap to a filled pin icon when active so the state reads at a glance.
-        color = theme.ACCENT if checked else theme.TEXT_SECOND
+        # Filled pin icon + lighter pastel-red SELECT_GLOW when active so
+        # the on-state pops without competing with regular accent buttons.
+        color = theme.SELECT_GLOW if checked else theme.TEXT_SECOND
         self.pin_btn.setIcon(icons.pin(14, color, filled=checked))
         # Window flag tweak so OS focus changes can't drag the popup back to
         # idle hide-on-blur — Tray._maybe_hide also respects self._pinned.
@@ -219,14 +220,14 @@ class Popup(QWidget):
             enable_blur(hwnd)
 
     def paintEvent(self, e):
-        # iOS-glass body: deep near-black at reduced alpha so the Mica/acrylic
-        # backdrop reads through. Alpha 165 is the balance between "still
-        # legible white text on top" and "you can see the desktop tinting".
+        # Pure black glass body. Alpha 170 balances "white text stays
+        # legible" with "you can see the desktop tinting through". Lower
+        # to ~140 for more transparency, raise to ~210 for more solid.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 18, 18)
-        p.fillPath(path, QColor(12, 14, 20, 165))
+        p.fillPath(path, QColor(0, 0, 0, 170))
         p.end()
 
     def keyPressEvent(self, e):

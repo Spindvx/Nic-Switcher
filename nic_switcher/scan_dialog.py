@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QGuiApplication
 
 from . import dante, discover, icons, theme
+from .dialogs import GlassDialog
 from .discover import Device, is_av, kind_label
 from .sniffer import Sniffer
 from .theme import KIND_COLORS, STYLE
@@ -220,12 +221,12 @@ class DeviceRow(QFrame):
 # Scan dialog
 # ---------------------------------------------------------------------------
 
-class ScanDialog(QDialog):
+class ScanDialog(GlassDialog):
     apply_subnet = pyqtSignal(str, int)
     probe_status = pyqtSignal(str, str)
 
     def __init__(self, sniffer: Sniffer, bind_ip: str, parent=None):
-        super().__init__(parent)
+        super().__init__(title="Network Scan", parent=parent)
         self.sniffer = sniffer
         self.bind_ip = bind_ip
         self._closed = False
@@ -234,10 +235,7 @@ class ScanDialog(QDialog):
         self._dante = dante.DanteBrowser(on_update=self._on_dante_update)
         self._dante_available, self._dante_err = self._dante.available()
 
-        self.setWindowTitle("Network Scan — NIC Switcher")
-        self.resize(620, 680)
-        self.setStyleSheet(STYLE)
-        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        self.resize(640, 720)
 
         # Header
         title = QLabel("Network Scan")
@@ -368,8 +366,9 @@ class ScanDialog(QDialog):
         root.setObjectName("root")
 
         body = QVBoxLayout(root)
-        body.setContentsMargins(20, 18, 20, 16)
+        body.setContentsMargins(20, 12, 20, 16)
         body.setSpacing(10)
+        body.addWidget(self.build_title_strip())   # custom close + draggable
         body.addLayout(header)
         body.addLayout(stat_row)
         body.addLayout(filter_row)

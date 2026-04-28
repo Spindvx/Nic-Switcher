@@ -1,18 +1,29 @@
 """Design system — tokens + stylesheet.
 
-Aesthetic: iOS dark mode + glass. Translucent layered surfaces over Mica
-backdrop, generous corner radius, vibrant accent, near-borderless cards
-separated by tone rather than lines.
+Aesthetic: black-glass + pastel red. Translucent layered surfaces over Mica
+backdrop, generous corner radius, soft pastel-red accent, near-borderless
+cards separated by tone rather than lines.
+
+────────────────────────────────────────────────────────────────────────────
+QUICK COLOR REFERENCE — change these three lines to retheme everything:
+
+  ACCENT       → main button / focus / link color   (currently pastel red)
+  SELECT_GLOW  → "on / selected / pinned" indicator (currently pastel red)
+  BG_DEEP      → popup body tint                    (currently pure black)
+
+The popup's paintEvent in popup.py also has a hard-coded RGBA — search for
+'QColor(0, 0, 0' to tweak the body opacity directly.
+────────────────────────────────────────────────────────────────────────────
 """
 
 # ---------------------------------------------------------------------------
-# Design tokens — iOS dark + glass
+# Design tokens — black glass + pastel red
 # ---------------------------------------------------------------------------
 
-# -- Surfaces (translucent for genuine glass feel; Mica/acrylic shows through) --
-BG_DEEP        = "rgba(8, 9, 14, 180)"      # popup base — deepest layer
-BG_ROOT        = "rgba(20, 22, 28, 0)"      # transparent: rely on the popup's paintEvent for the tint, so #root doesn't draw an opaque rect over Mica
-BG_CARD        = "rgba(255, 255, 255, 8)"   # iOS-style "fill on glass" — subtle white over Mica
+# -- Surfaces — pure black haze, semi-transparent so Mica shows through --
+BG_DEEP        = "rgba(0, 0, 0, 180)"       # popup base — pure black haze
+BG_ROOT        = "rgba(0, 0, 0, 0)"         # transparent: popup paintEvent owns the tint so #root doesn't draw over Mica
+BG_CARD        = "rgba(255, 255, 255, 8)"   # subtle white "fill on glass" for cards/inputs
 BG_CARD_HOVER  = "rgba(255, 255, 255, 14)"
 BG_CARD_ACTIVE = "rgba(255, 255, 255, 22)"
 BG_CHIP        = "rgba(255, 255, 255, 12)"
@@ -22,12 +33,19 @@ BORDER         = "rgba(255, 255, 255, 14)"
 BORDER_STRONG  = "rgba(255, 255, 255, 30)"
 BORDER_SUBTLE  = "rgba(255, 255, 255, 6)"
 
-# -- Accent (iOS-blue-leaning cyan) --
-ACCENT         = "#5bd7ff"
-ACCENT_HOVER   = "#7de3ff"
-ACCENT_PRESS   = "#3fc2ed"
-ACCENT_DIM     = "#3a7e9a"
-ACCENT_INK     = "#051820"
+# -- Accent (light pastel coral red) --
+ACCENT         = "#ff9aa2"   # main button / focus / link color
+ACCENT_HOVER   = "#ffb3b8"
+ACCENT_PRESS   = "#e88791"
+ACCENT_DIM     = "#7a4548"
+ACCENT_INK     = "#1a0507"   # dark crimson text on the pastel red bg
+
+# -- Selected / "on" indicator (lighter pastel red glow) --
+# Used for: pin button when pinned, active preset card. Brighter and softer
+# than ACCENT so the "currently active" state pops without competing with
+# regular accent buttons.
+SELECT_GLOW       = "#ffc4c8"
+SELECT_GLOW_RGBA  = "rgba(255, 196, 200, 70)"  # soft halo for stylesheet
 
 # -- Semantic --
 SUCCESS        = "#6de3a4"
@@ -242,8 +260,10 @@ QPushButton#icon:hover {{
 }}
 QPushButton#icon:pressed {{ background: {BG_CARD_HOVER}; }}
 QPushButton#icon:checked {{
-    background: rgba(91, 215, 255, 30);
-    color: {ACCENT};
+    /* "On" state — pastel red halo. SELECT_GLOW_RGBA controls the tint. */
+    background: {SELECT_GLOW_RGBA};
+    color: {SELECT_GLOW};
+    border: 1px solid {SELECT_GLOW_RGBA};
 }}
 
 QPushButton#danger-ghost {{
@@ -267,8 +287,9 @@ QFrame#presetCard:hover, QFrame#deviceCard:hover {{
     background: {BG_CARD_HOVER};
 }}
 QFrame#presetCardActive {{
-    background: rgba(91, 215, 255, 28);
-    border: 1px solid {ACCENT};
+    /* Active preset — soft pastel red halo + 1px glow border. */
+    background: {SELECT_GLOW_RGBA};
+    border: 1px solid {SELECT_GLOW};
     border-radius: {RADIUS_MD}px;
 }}
 
@@ -328,7 +349,9 @@ QToolTip {{
 }}
 
 /* --------- dialogs --------- */
-QDialog {{ background: #14161e; }}
+/* GlassDialog handles its own background via paintEvent — leave QDialog
+   transparent so the black-glass tint shines through. */
+QDialog {{ background: transparent; }}
 QDialog QLabel {{ color: {TEXT_BODY}; }}
 
 QDialogButtonBox QPushButton {{ min-width: 88px; }}

@@ -10,3 +10,4 @@ dist-*/
 *.egg-info/
 .vscode/
 .idea/
+sandbox_output.txt

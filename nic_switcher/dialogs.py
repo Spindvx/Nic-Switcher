@@ -4,8 +4,8 @@ from __future__ import annotations
 import ipaddress
 from typing import Optional
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QPoint, QSize, Qt
+from PyQt6.QtGui import QColor, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit,
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from . import firewall, icons, mac as mac_mod, nic as nic_mod, theme
 from . import discover
+from .blur import enable_blur, try_enable_mica
 from .config import DhcpConfig, Preset
 from .theme import STYLE
 from .validate import (
@@ -33,9 +34,107 @@ def _display_mac_field(stored: str) -> str:
     return mac_mod.format_mac_pretty(norm) if norm else stored
 
 
+# ---------------------------------------------------------------------------
+# GlassDialog — frameless + black-glass body, matches the popup chrome.
+#
+# All app dialogs subclass this so they inherit the same look (no system
+# title bar, custom close button, draggable by the title strip, transparent
+# body so Mica/acrylic shows through). Each subclass adds its own content
+# below the title strip.
+# ---------------------------------------------------------------------------
+
+class GlassDialog(QDialog):
+    """Frameless dialog with the same black-glass body as the main popup."""
+
+    def __init__(self, title: str = "", parent=None):
+        super().__init__(parent)
+        self._title_text = title
+        self._drag_offset: Optional[QPoint] = None
+        self.setWindowTitle(title)
+        self.setStyleSheet(STYLE)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setSizeGripEnabled(False)
+
+    # ── glass body ────────────────────────────────────────────────────
+    def paintEvent(self, e):
+        # Pure black glass, same alpha as the main popup so dialogs and
+        # popup feel like one surface family. Tweak alpha for opacity.
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 18, 18)
+        p.fillPath(path, QColor(0, 0, 0, 170))
+        p.end()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # Try Mica first, fall back to acrylic blur — same as the popup.
+        try:
+            hwnd = int(self.winId())
+            if not try_enable_mica(hwnd):
+                enable_blur(hwnd)
+        except Exception:
+            pass
+
+    # ── drag-by-title-strip ───────────────────────────────────────────
+    def mousePressEvent(self, e):
+        # Only initiate drag from the top 44px (the custom title strip).
+        if e.button() == Qt.MouseButton.LeftButton and e.position().y() <= 44:
+            self._drag_offset = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            e.accept()
+        else:
+            super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._drag_offset is not None and (e.buttons() & Qt.MouseButton.LeftButton):
+            self.move(e.globalPosition().toPoint() - self._drag_offset)
+            e.accept()
+        else:
+            super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._drag_offset = None
+        super().mouseReleaseEvent(e)
+
+    # ── title strip widget for subclasses to embed at the top ─────────
+    def build_title_strip(self) -> QWidget:
+        """Return a QWidget with [Title] [stretch] [Close] suitable for
+        prepending to the dialog's body layout."""
+        strip = QWidget()
+        strip.setFixedHeight(34)
+        lay = QHBoxLayout(strip)
+        lay.setContentsMargins(2, 0, 2, 0)
+        lay.setSpacing(8)
+        title = QLabel(self._title_text)
+        title.setStyleSheet(
+            f"color: {theme.TEXT_PRIMARY}; font-size: 13px; font-weight: 600;"
+        )
+        close = QPushButton()
+        close.setObjectName("icon")
+        close.setFixedSize(28, 28)
+        close.setIcon(icons.close(14, theme.TEXT_SECOND))
+        close.setIconSize(QSize(14, 14))
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.setToolTip("Close (Esc)")
+        close.clicked.connect(self.reject)
+        lay.addWidget(title)
+        lay.addStretch(1)
+        lay.addWidget(close)
+        return strip
+
+
 def _apply_window_chrome(dlg: QDialog):
+    """Legacy helper. Most dialogs now inherit GlassDialog and don't need
+    this — kept for any QDialog that hasn't been migrated yet."""
     dlg.setStyleSheet(STYLE)
-    dlg.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+    try:
+        dlg.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+    except Exception:
+        pass
     dlg.setSizeGripEnabled(False)
 
 
@@ -64,12 +163,13 @@ class _InlineError(QLabel):
 # Preset editor — mask input, no CIDR
 # ---------------------------------------------------------------------------
 
-class PresetDialog(QDialog):
+class PresetDialog(GlassDialog):
     def __init__(self, preset: Preset | None = None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Edit preset" if preset and preset.name else "New preset")
-        self.resize(460, 520)
-        _apply_window_chrome(self)
+        super().__init__(
+            title="Edit preset" if preset and preset.name else "New preset",
+            parent=parent,
+        )
+        self.resize(480, 560)
 
         title = QLabel("Preset")
         title.setObjectName("title")
@@ -151,8 +251,9 @@ class PresetDialog(QDialog):
         root = QWidget(self)
         root.setObjectName("root")
         body = QVBoxLayout(root)
-        body.setContentsMargins(22, 20, 22, 18)
+        body.setContentsMargins(22, 12, 22, 18)
         body.setSpacing(12)
+        body.addWidget(self.build_title_strip())   # custom close button + draggable
         body.addWidget(title)
         body.addWidget(subtitle)
         body.addSpacing(4)
@@ -265,13 +366,11 @@ def _derive_range(bind_ip: str, mask: str) -> tuple[str, str]:
     return str(start), str(end)
 
 
-class DhcpDialog(QDialog):
+class DhcpDialog(GlassDialog):
     def __init__(self, cfg: DhcpConfig, suggested_bind_ip: str = "", parent=None):
-        super().__init__(parent)
+        super().__init__(title="DHCP server", parent=parent)
         self.cfg_in = cfg
-        self.setWindowTitle("DHCP server — NIC Switcher")
-        self.resize(520, 560)
-        _apply_window_chrome(self)
+        self.resize(540, 600)
 
         title = QLabel("DHCP Server")
         title.setObjectName("title")
@@ -410,8 +509,9 @@ class DhcpDialog(QDialog):
         root = QWidget(self)
         root.setObjectName("root")
         body = QVBoxLayout(root)
-        body.setContentsMargins(22, 20, 22, 18)
+        body.setContentsMargins(22, 12, 22, 18)
         body.setSpacing(12)
+        body.addWidget(self.build_title_strip())
         body.addWidget(title)
         body.addWidget(subtitle)
         body.addSpacing(2)
