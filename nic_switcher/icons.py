@@ -290,59 +290,72 @@ def brand_logo(height: int = 22) -> QPixmap:
 # -----------------------------------------------------------------------------
 
 def brand_tray_icon(size: int = 64) -> QIcon:
-    """Rounded tile with gradient and a stylised 'N' network node mark."""
+    """iOS-app-tile-style brand mark: rounded squircle with a gradient and a
+    centered 'switch' glyph — two opposing arrows forming a swap loop, the
+    universal language for "switch between two states".
+    """
+    import math
     pix = QPixmap(size, size)
     pix.fill(Qt.GlobalColor.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-    # gradient background tile
-    pad = max(2, size // 16)
+    # ── Tile (iOS app icon proportions: 22.5% radius) ──
+    pad = max(2, size // 18)
     rect = QRectF(pad, pad, size - 2 * pad, size - 2 * pad)
+    radius = size * 0.225
     path = QPainterPath()
-    radius = size * 0.22
     path.addRoundedRect(rect, radius, radius)
 
     grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
     grad.setColorAt(0.0, QColor("#6ee2ff"))
-    grad.setColorAt(0.6, QColor("#5bd7ff"))
-    grad.setColorAt(1.0, QColor("#9c7bff"))
+    grad.setColorAt(0.55, QColor("#5bd7ff"))
+    grad.setColorAt(1.0, QColor("#5b8eff"))
     p.fillPath(path, QBrush(grad))
 
-    # soft inner highlight
-    hi = QColor(255, 255, 255, 50)
+    # Top inner highlight — that subtle iOS gloss that makes flat icons feel
+    # tactile without being skeuomorphic.
+    hi = QColor(255, 255, 255, 36)
     hi_path = QPainterPath()
     hi_path.addRoundedRect(
         QRectF(rect.left() + 1, rect.top() + 1,
-               rect.width() - 2, rect.height() / 2 - 2),
+               rect.width() - 2, rect.height() * 0.48),
         radius - 1, radius - 1,
     )
     p.fillPath(hi_path, QBrush(hi))
 
-    # mark: two nodes with connecting line (stylized 'N' for Network/NIC)
-    p.setPen(QPen(QColor(255, 255, 255, 240), max(2.2, size / 22),
+    # ── Swap arrows glyph (centered) ──
+    # Two parallel horizontal arrows, opposite directions. White on the
+    # gradient. Stroke width scales with size so it stays bold at 16px and
+    # crisp at 256px.
+    stroke = max(2.4, size / 16)
+    p.setPen(QPen(QColor(255, 255, 255, 240), stroke,
                   Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
                   Qt.PenJoinStyle.RoundJoin))
     p.setBrush(Qt.BrushStyle.NoBrush)
 
-    # Two diagonal lines forming an 'N'
-    x1 = size * 0.32
-    x2 = size * 0.68
-    y_top = size * 0.34
-    y_bot = size * 0.68
-    # left vertical
-    p.drawLine(QPointF(x1, y_bot), QPointF(x1, y_top))
-    # diagonal
-    p.drawLine(QPointF(x1, y_top), QPointF(x2, y_bot))
-    # right vertical
-    p.drawLine(QPointF(x2, y_bot), QPointF(x2, y_top))
+    # geometry, all relative to the rect for clean scaling
+    cx = rect.center().x()
+    cy = rect.center().y()
+    arm = rect.width() * 0.30           # half-width of each arrow shaft
+    gap = rect.height() * 0.13          # vertical gap from center to each arrow
+    head = rect.width() * 0.085         # arrowhead leg length
 
-    # node dots at corners
-    p.setBrush(QBrush(QColor(255, 255, 255)))
-    p.setPen(Qt.PenStyle.NoPen)
-    node_r = max(2.0, size / 22)
-    for pt in ((x1, y_top), (x1, y_bot), (x2, y_top), (x2, y_bot)):
-        p.drawEllipse(QPointF(*pt), node_r, node_r)
+    # Top arrow: right-pointing
+    y_top = cy - gap
+    p.drawLine(QPointF(cx - arm, y_top), QPointF(cx + arm, y_top))
+    p.drawLine(QPointF(cx + arm - head, y_top - head),
+               QPointF(cx + arm, y_top))
+    p.drawLine(QPointF(cx + arm - head, y_top + head),
+               QPointF(cx + arm, y_top))
+
+    # Bottom arrow: left-pointing
+    y_bot = cy + gap
+    p.drawLine(QPointF(cx - arm, y_bot), QPointF(cx + arm, y_bot))
+    p.drawLine(QPointF(cx - arm + head, y_bot - head),
+               QPointF(cx - arm, y_bot))
+    p.drawLine(QPointF(cx - arm + head, y_bot + head),
+               QPointF(cx - arm, y_bot))
 
     p.end()
     return QIcon(pix)

@@ -122,8 +122,11 @@ class PresetCard(QFrame):
         apply_btn = QPushButton("Active" if is_active else "Apply")
         apply_btn.setObjectName("accent")
         apply_btn.setEnabled(not is_active)
-        apply_btn.setFixedHeight(30)
-        apply_btn.setMinimumWidth(74)
+        # Height bumped to 34 — the new iOS-glass theme padding (8px 16px)
+        # pushed the natural text bounds past 30px and the descender of 'y'
+        # was getting clipped on the preset card row.
+        apply_btn.setFixedHeight(34)
+        apply_btn.setMinimumWidth(78)
         apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         apply_btn.clicked.connect(lambda: self.apply_clicked.emit(preset))
 
@@ -216,13 +219,14 @@ class Popup(QWidget):
             enable_blur(hwnd)
 
     def paintEvent(self, e):
-        # iOS-glass body: a deep near-black with reduced opacity so the
-        # underlying Mica blur reads through as the dominant tint.
+        # iOS-glass body: deep near-black at reduced alpha so the Mica/acrylic
+        # backdrop reads through. Alpha 165 is the balance between "still
+        # legible white text on top" and "you can see the desktop tinting".
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 18, 18)
-        p.fillPath(path, QColor(12, 14, 20, 215))
+        p.fillPath(path, QColor(12, 14, 20, 165))
         p.end()
 
     def keyPressEvent(self, e):
@@ -260,9 +264,6 @@ class Popup(QWidget):
         title_col.addWidget(title)
         title_col.addWidget(subtitle)
 
-        self.status_label = QLabel("")
-        self.status_label.setObjectName("statusOk")
-
         self.pin_btn = _icon_button(icons.pin, "Pin — keep popup open when clicking away",
                                      theme.TEXT_SECOND, 30, 14)
         self.pin_btn.setCheckable(True)
@@ -274,10 +275,18 @@ class Popup(QWidget):
         header.addWidget(brand)
         header.addLayout(title_col)
         header.addStretch(1)
-        header.addWidget(self.status_label)
         header.addWidget(self.pin_btn)
         header.addWidget(close_btn)
         layout.addLayout(header)
+
+        # Status sits on its own row beneath the header — long status text
+        # (e.g. "Setting MAC to AA:BB:..." or "Reapplying CNZ POC Lab") used
+        # to overrun the title area when crammed into the header.
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("statusOk")
+        self.status_label.setWordWrap(False)
+        self.status_label.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.status_label)
 
         layout.addWidget(_divider())
 
@@ -318,18 +327,18 @@ class Popup(QWidget):
         mac_row.setSpacing(6)
         self.mac_input = QLineEdit()
         self.mac_input.setPlaceholderText("AA:BB:CC:DD:EE:FF")
-        self.mac_input.setFixedHeight(28)
+        self.mac_input.setFixedHeight(32)
         self.mac_input.returnPressed.connect(self._apply_typed_mac)
         self.mac_apply_btn = QPushButton("Apply")
         self.mac_apply_btn.setObjectName("accent")
         self.mac_apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mac_apply_btn.setFixedHeight(28)
+        self.mac_apply_btn.setFixedHeight(32)
         self.mac_apply_btn.setToolTip("Apply the typed MAC and restart the adapter (~5s)")
         self.mac_apply_btn.clicked.connect(self._apply_typed_mac)
         self.mac_random_btn = QPushButton("Random")
         self.mac_random_btn.setObjectName("ghost")
         self.mac_random_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mac_random_btn.setFixedHeight(28)
+        self.mac_random_btn.setFixedHeight(32)
         self.mac_random_btn.setToolTip(
             "Set a random locally-administered MAC (writes immediately)"
         )
@@ -337,7 +346,7 @@ class Popup(QWidget):
         self.mac_restore_btn = QPushButton("Restore")
         self.mac_restore_btn.setObjectName("ghost")
         self.mac_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.mac_restore_btn.setFixedHeight(28)
+        self.mac_restore_btn.setFixedHeight(32)
         self.mac_restore_btn.setToolTip(
             "Clear the MAC override and bring back the hardware MAC"
         )
@@ -453,29 +462,33 @@ class Popup(QWidget):
         self.dhcp_status.setObjectName("subtle")
         layout.addWidget(self.dhcp_status)
 
-        # Lease activity — shown while DHCP is running.
-        self.dhcp_leases = QLabel("")
-        self.dhcp_leases.setObjectName("subtle")
-        self.dhcp_leases.setWordWrap(True)
-        self.dhcp_leases.setVisible(False)
-        layout.addWidget(self.dhcp_leases)
-
         dhcp_row = QHBoxLayout()
         dhcp_row.setSpacing(6)
         self.dhcp_settings = QPushButton("  Configure")
         self.dhcp_settings.setIcon(icons.gear(14, theme.TEXT_BODY))
         self.dhcp_settings.setIconSize(QSize(14, 14))
-        self.dhcp_settings.setFixedHeight(32)
+        self.dhcp_settings.setFixedHeight(36)
         self.dhcp_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         self.dhcp_settings.clicked.connect(self._configure_dhcp)
         self.dhcp_toggle = QPushButton("Start DHCP")
         self.dhcp_toggle.setObjectName("accent")
-        self.dhcp_toggle.setFixedHeight(32)
+        self.dhcp_toggle.setFixedHeight(36)
         self.dhcp_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.dhcp_toggle.clicked.connect(self._toggle_dhcp)
         dhcp_row.addWidget(self.dhcp_settings)
         dhcp_row.addWidget(self.dhcp_toggle, 1)
         layout.addLayout(dhcp_row)
+
+        # Lease activity — sits BELOW the buttons so its visibility toggle
+        # only pushes the footer/spacer, never moves the button row. Empty
+        # text + always-in-layout means the buttons keep a fixed Y, which
+        # eliminates the WA_TranslucentBackground stale-pixel artifact that
+        # previously left ghost copies of the toggle button on screen.
+        self.dhcp_leases = QLabel("")
+        self.dhcp_leases.setObjectName("subtle")
+        self.dhcp_leases.setWordWrap(True)
+        self.dhcp_leases.setMinimumHeight(0)
+        layout.addWidget(self.dhcp_leases)
 
         layout.addStretch(1)
 
@@ -692,7 +705,7 @@ class Popup(QWidget):
 
     # ---- MAC quick actions ----
     def _run_mac_action_bg(self, verb: str, fn):
-        """Shared helper. verb is user-facing ('Randomizing MAC…')."""
+        """Shared helper. verb is user-facing ('Setting MAC to AA:BB:...')."""
         nic_name = self.nic_combo.currentData()
         if not nic_name:
             self._set_status("Select a NIC first", "warn")
@@ -700,10 +713,16 @@ class Popup(QWidget):
         if self._mac_busy:
             self._set_status("MAC change already in progress…", "warn")
             return
+        # Lock the entire MAC row + show a busy cursor so the user can't
+        # double-click into a half-finished registry write. Adapter restart
+        # takes 4-8s; without this, it looks like the app froze.
         self._mac_busy = True
-        self.mac_random_btn.setEnabled(False)
-        self.mac_restore_btn.setEnabled(False)
-        self._set_status(f"{verb}…", "warn")
+        for w in (self.mac_input, self.mac_apply_btn,
+                  self.mac_random_btn, self.mac_restore_btn):
+            w.setEnabled(False)
+        self.mac_apply_btn.setText("Applying…")
+        QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+        self._set_status(f"{verb} — restarting adapter…", "warn")
 
         def worker():
             try:
@@ -742,6 +761,16 @@ class Popup(QWidget):
 
     def _on_mac_done(self, ok: bool, msg: str):
         self._mac_busy = False
+        # Always restore the cursor + Apply button text — even on error, so
+        # the UI never gets stuck in busy mode.
+        try:
+            QApplication.restoreOverrideCursor()
+        except Exception:
+            pass
+        self.mac_apply_btn.setText("Apply")
+        for w in (self.mac_input, self.mac_apply_btn,
+                  self.mac_random_btn, self.mac_restore_btn):
+            w.setEnabled(True)
         self._set_status(msg, "ok" if ok else "err")
         # Adapter was just disabled/enabled — repopulate so current MAC,
         # IP and link state all refresh together.
@@ -898,11 +927,13 @@ class Popup(QWidget):
             self._refresh_dhcp_leases()
 
     def _refresh_dhcp_leases(self):
-        """Pull recent lease events and render a terse activity line."""
+        """Pull recent lease events and render a terse activity line. Always
+        keeps the label in layout — empty text when nothing to show — so the
+        DHCP button row never shifts position."""
         try:
             snap = dhcp_mod.lease_snapshot(max_events=20)
         except Exception:
-            self.dhcp_leases.setVisible(False)
+            self.dhcp_leases.setText("")
             return
         active = snap.active
         recent = snap.recent
@@ -913,7 +944,6 @@ class Popup(QWidget):
             self.dhcp_leases.setStyleSheet(
                 f"color: {theme.TEXT_MUTED}; font-size: 11px;"
             )
-            self.dhcp_leases.setVisible(True)
             return
         lines = [f"{len(active)} active lease(s)"]
         # Show up to 3 most recently touched leases, newest first. We pull
@@ -937,7 +967,6 @@ class Popup(QWidget):
         self.dhcp_leases.setStyleSheet(
             f"color: {theme.TEXT_BODY}; font-size: 11px;"
         )
-        self.dhcp_leases.setVisible(True)
 
     def _refresh_dhcp_ui(self):
         running = dhcp_mod.is_running()
@@ -973,7 +1002,7 @@ class Popup(QWidget):
             self.dhcp_status.setStyleSheet(
                 f"color: {theme.TEXT_MUTED}; font-size: 11px;"
             )
-            self.dhcp_leases.setVisible(False)
+            self.dhcp_leases.setText("")
         else:
             self._set_led(self.dhcp_led, theme.WARNING)
             self.dhcp_chip.setText("SETUP")
@@ -986,7 +1015,12 @@ class Popup(QWidget):
             self.dhcp_status.setStyleSheet(
                 f"color: {theme.WARNING}; font-size: 11px;"
             )
-            self.dhcp_leases.setVisible(False)
+            self.dhcp_leases.setText("")
+        # Force a full popup repaint. WA_TranslucentBackground + frameless
+        # windows on Windows can leave stale pixels of moved children behind
+        # when the layout reflows; update() schedules a clean paintEvent over
+        # the entire surface, eliminating ghost-button artifacts.
+        self.update()
 
     # ---- show / hide ----
     def show_anchored(self):

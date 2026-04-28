@@ -9,13 +9,13 @@ separated by tone rather than lines.
 # Design tokens — iOS dark + glass
 # ---------------------------------------------------------------------------
 
-# -- Surfaces (layered darks, more translucent for the glass feel) --
-BG_DEEP        = "rgba(8, 9, 14, 220)"      # popup base — deepest layer
-BG_ROOT        = "rgba(20, 22, 28, 200)"    # primary surface (root container)
-BG_CARD        = "rgba(255, 255, 255, 6)"   # iOS-style "fill on glass" — very subtle white over the popup tint
-BG_CARD_HOVER  = "rgba(255, 255, 255, 12)"
-BG_CARD_ACTIVE = "rgba(255, 255, 255, 18)"
-BG_CHIP        = "rgba(255, 255, 255, 10)"
+# -- Surfaces (translucent for genuine glass feel; Mica/acrylic shows through) --
+BG_DEEP        = "rgba(8, 9, 14, 180)"      # popup base — deepest layer
+BG_ROOT        = "rgba(20, 22, 28, 0)"      # transparent: rely on the popup's paintEvent for the tint, so #root doesn't draw an opaque rect over Mica
+BG_CARD        = "rgba(255, 255, 255, 8)"   # iOS-style "fill on glass" — subtle white over Mica
+BG_CARD_HOVER  = "rgba(255, 255, 255, 14)"
+BG_CARD_ACTIVE = "rgba(255, 255, 255, 22)"
+BG_CHIP        = "rgba(255, 255, 255, 12)"
 
 # -- Borders — minimal; surfaces separate via tone, not lines --
 BORDER         = "rgba(255, 255, 255, 14)"

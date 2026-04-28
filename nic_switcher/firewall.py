@@ -64,14 +64,63 @@ def _add_program(name: str, exe_path: str) -> tuple[int, str]:
     ])
 
 
+def _show_rule(name: str) -> tuple[int, str]:
+    return _run([
+        "netsh", "advfirewall", "firewall", "show", "rule", f"name={name}",
+    ])
+
+
+def rules_in_place_for(exe_path: Optional[str]) -> bool:
+    """Tighter check than `rules_present`: confirms BOTH UDP rules exist AND
+    the program rule (if exe_path given) references the same exe. Used to
+    short-circuit the 8s delete+re-add cycle when nothing's actually changed.
+
+    Total time: ~3s (three parallel show-rule calls). The cost of the check
+    is justified because the alternative — re-applying every startup —
+    blocks a UI status line for 5-8s on a locked-down machine.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        f_in = ex.submit(_show_rule, RULE_DHCP_IN)
+        f_out = ex.submit(_show_rule, RULE_DHCP_OUT)
+        f_prog = ex.submit(_show_rule, RULE_DHCP_PROG) if exe_path else None
+        try:
+            rc_in, out_in = f_in.result(timeout=6)
+            rc_out, out_out = f_out.result(timeout=6)
+        except Exception:
+            return False
+        if rc_in != 0 or RULE_DHCP_IN not in out_in:
+            return False
+        if rc_out != 0 or RULE_DHCP_OUT not in out_out:
+            return False
+        if f_prog is not None:
+            try:
+                rc_prog, out_prog = f_prog.result(timeout=6)
+            except Exception:
+                return False
+            if rc_prog != 0 or RULE_DHCP_PROG not in out_prog:
+                return False
+            # Program path must match — if the exe moved, we need to
+            # re-add or dhcpsrv will silently get blocked.
+            if exe_path and exe_path.lower() not in out_prog.lower():
+                return False
+    return True
+
+
 def ensure_dhcp_rules(exe_path: Optional[str] = None) -> tuple[bool, str]:
     """Install (idempotent) firewall rules so dhcpsrv can receive client DISCOVERs
     and our raw-socket sniffer isn't blocked.
 
-    Runs the netsh calls in parallel; total wall time ≈ 2s instead of ≈ 8s.
+    Fast path: if the rules are already in place AND (when exe_path is given)
+    the program rule references the same exe, skip the whole delete+re-add
+    cycle. Saves ~5-8s on every app startup once configured.
+
+    Slow path: parallel netsh calls ≈ 2s instead of ≈ 8s sequential.
 
     Returns (ok, human_readable_msg).
     """
+    if rules_in_place_for(exe_path):
+        return True, "Firewall rules already in place — no change."
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         # delete first (fire-and-forget) so fresh add doesn't accumulate dupes
         del_futures = [

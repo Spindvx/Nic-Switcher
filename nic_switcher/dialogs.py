@@ -355,14 +355,16 @@ class DhcpDialog(QDialog):
         fw_row = QHBoxLayout()
         fw_row.setSpacing(8)
         fw_row.addWidget(self.fw_check, 1)
-        fw_now = QPushButton("Apply now")
-        fw_now.setObjectName("ghost")
-        fw_now.setCursor(Qt.CursorShape.PointingHandCursor)
-        fw_now.clicked.connect(self._apply_firewall_now)
-        fw_remove = QPushButton("Remove rules")
-        fw_remove.setObjectName("ghost")
-        fw_remove.setCursor(Qt.CursorShape.PointingHandCursor)
-        fw_remove.clicked.connect(self._remove_firewall)
+        self._fw_now = QPushButton("Apply now")
+        self._fw_now.setObjectName("ghost")
+        self._fw_now.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._fw_now.clicked.connect(self._apply_firewall_now)
+        self._fw_remove = QPushButton("Remove rules")
+        self._fw_remove.setObjectName("ghost")
+        self._fw_remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._fw_remove.clicked.connect(self._remove_firewall)
+        fw_now = self._fw_now
+        fw_remove = self._fw_remove
         fw_row.addWidget(fw_now)
         fw_row.addWidget(fw_remove)
 
@@ -477,8 +479,13 @@ class DhcpDialog(QDialog):
         import threading
         from PyQt6.QtCore import QTimer
         self.fw_status.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11px;")
-        self.fw_status.setText("Applying firewall rules…")
+        self.fw_status.setText("Checking firewall rules…")
         exe = self.exe.text().strip() or None
+        # Lock the buttons so a double-click can't queue parallel netsh
+        # storms — one of the symptoms the user hit was clicking Apply, the
+        # button staying spinning forever, and them clicking again.
+        self._fw_now.setEnabled(False)
+        self._fw_remove.setEnabled(False)
 
         def worker():
             try:
@@ -494,6 +501,8 @@ class DhcpDialog(QDialog):
         from PyQt6.QtCore import QTimer
         self.fw_status.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 11px;")
         self.fw_status.setText("Removing firewall rules…")
+        self._fw_now.setEnabled(False)
+        self._fw_remove.setEnabled(False)
 
         def worker():
             try:
@@ -510,6 +519,8 @@ class DhcpDialog(QDialog):
             f"font-size: 11px; font-weight: 600;"
         )
         self.fw_status.setText(msg)
+        self._fw_now.setEnabled(True)
+        self._fw_remove.setEnabled(True)
 
     def _apply_fw_status(self, present: bool):
         self.fw_status.setStyleSheet(

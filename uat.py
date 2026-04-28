@@ -346,12 +346,19 @@ try:
     (ok if actual == expected else fail)(
         f"dhcp_toggle text deterministic: {actual!r} (expected {expected!r})"
     )
-    # Lease label should be a wired QLabel, hidden when DHCP idle.
+    # Lease label is always in layout (avoids ghost-button repaint bug);
+    # it just carries empty text when DHCP isn't running.
     assert hasattr(popup, "dhcp_leases"), "missing dhcp_leases widget"
     if not dhcp.is_running():
-        (ok if not popup.dhcp_leases.isVisible() else fail)(
-            "dhcp_leases hidden when server idle"
+        (ok if popup.dhcp_leases.text() == "" else fail)(
+            f"dhcp_leases empty when server idle "
+            f"(got {popup.dhcp_leases.text()!r})"
         )
+    # Pin button defaults unchecked
+    assert hasattr(popup, "pin_btn"), "missing pin_btn"
+    (ok if not popup.pin_btn.isChecked() else fail)(
+        "pin_btn defaults unchecked + popup unpinned"
+    )
     # Brand label has the larger pixmap (height 38 now).
     pm = icons.brand_logo(38)
     (ok if not pm.isNull() and pm.height() == 38 else fail)(

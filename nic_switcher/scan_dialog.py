@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import webbrowser
 from typing import Optional
 
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
@@ -54,13 +55,14 @@ def _hex_to_rgba(hex_color: str, alpha: int = 255) -> str:
 
 class DeviceRow(QFrame):
     use_subnet = pyqtSignal(str, int)
+    open_web = pyqtSignal(str)
 
     def __init__(self, dev: Device, sniffer: Sniffer, parent=None):
         super().__init__(parent)
         self.dev = dev
         self.sniffer = sniffer
         self.setObjectName("deviceCard")
-        # Right-click → quick copy menu (IP / MAC / hostname).
+        # Right-click → quick copy / use-subnet menu.
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
 
@@ -131,13 +133,17 @@ class DeviceRow(QFrame):
         if meta is not None:
             mid_col.addWidget(meta)
 
-        # Use button
-        use_btn = QPushButton("Use")
+        # Open button — launches the device's web GUI in the default browser.
+        # AV gear is overwhelmingly HTTP (self-signed HTTPS is rare and adds
+        # cert prompts), so we deliberately use http://. To prefill the
+        # manual form with a free IP from this subnet, right-click the row
+        # and pick "Use this subnet".
+        use_btn = QPushButton("Open")
         use_btn.setObjectName("ghost")
-        use_btn.setToolTip("Prefill manual IP form with a free address in this subnet")
+        use_btn.setToolTip(f"Open http://{dev.ip} in your default browser")
         use_btn.setFixedHeight(28)
         use_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        use_btn.clicked.connect(self._emit_subnet)
+        use_btn.clicked.connect(self._open_web)
 
         right_col = QVBoxLayout()
         right_col.setContentsMargins(0, 0, 0, 0)
@@ -176,6 +182,16 @@ class DeviceRow(QFrame):
                     break
         self.use_subnet.emit(f"{subnet}.{chosen or 250}", 24)
 
+    def _open_web(self):
+        if not self.dev.ip:
+            return
+        url = f"http://{self.dev.ip}"
+        try:
+            webbrowser.open(url, new=2, autoraise=True)
+        except Exception:
+            pass
+        self.open_web.emit(url)
+
     def _on_context_menu(self, pos):
         menu = QMenu(self)
         clip = QGuiApplication.clipboard()
@@ -184,6 +200,8 @@ class DeviceRow(QFrame):
             return lambda: clip.setText(text)
 
         if self.dev.ip:
+            menu.addAction(f"Open  ·  http://{self.dev.ip}", self._open_web)
+            menu.addSeparator()
             menu.addAction(f"Copy IP  ·  {self.dev.ip}", copy(self.dev.ip))
         if self.dev.mac:
             menu.addAction(f"Copy MAC  ·  {self.dev.mac}", copy(self.dev.mac))
@@ -194,7 +212,7 @@ class DeviceRow(QFrame):
             menu.addAction(f"Copy vendor  ·  {self.dev.vendor[:32]}",
                            copy(self.dev.vendor))
         menu.addSeparator()
-        menu.addAction("Use this subnet", self._emit_subnet)
+        menu.addAction("Use this subnet (prefill manual)", self._emit_subnet)
         menu.exec(self.mapToGlobal(pos))
 
 
@@ -409,6 +427,9 @@ class ScanDialog(QDialog):
             pass
         super().closeEvent(e)
 
+    def _on_open_web(self, url: str):
+        self._set_status(f"Opening {url} in browser…", "ok")
+
     def _auto_probe_tick(self):
         """Periodic re-probe so the list freshens itself while open. Runs the
         worker on a thread so the 96-way ping sweep doesn't block the UI."""
@@ -567,12 +588,14 @@ class ScanDialog(QDialog):
             for dev in av_devs:
                 row = DeviceRow(dev, self.sniffer)
                 row.use_subnet.connect(self.apply_subnet)
+                row.open_web.connect(self._on_open_web)
                 self.list_layout.insertWidget(self.list_layout.count() - 1, row)
         if other_devs:
             self._insert_section("OTHER", f"{len(other_devs)} device(s)")
             for dev in other_devs:
                 row = DeviceRow(dev, self.sniffer)
                 row.use_subnet.connect(self.apply_subnet)
+                row.open_web.connect(self._on_open_web)
                 self.list_layout.insertWidget(self.list_layout.count() - 1, row)
         if not av_devs and not other_devs and self.av_only.isChecked():
             hint = QLabel(
