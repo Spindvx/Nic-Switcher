@@ -172,7 +172,7 @@ class PresetDialog(GlassDialog):
         subtitle.setWordWrap(True)
 
         self.name = QLineEdit(preset.name if preset else "")
-        self.name.setPlaceholderText("e.g. Somerset")
+        self.name.setPlaceholderText("e.g. Connect NZ")
         self.ip = QLineEdit(preset.ip if preset else "")
         self.ip.setPlaceholderText("10.17.75.240   (blank = DHCP)")
         self.mask = QLineEdit(

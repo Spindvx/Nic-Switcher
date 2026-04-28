@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import ctypes
+import re
 import socket
 import struct
 import subprocess
@@ -438,9 +439,11 @@ class Device:
     mac: Optional[str] = None
     vendor: Optional[str] = None
     kind: Optional[str] = None  # best-guess class key (qsys/crestron/switch/…)
+    confidence: int = 0          # 0-100, how sure we are about `kind`
     hostname: Optional[str] = None
     ports: set[tuple[str, int]] = field(default_factory=set)
     mdns_services: set[str] = field(default_factory=set)
+    http_banner: Optional[str] = None  # short fingerprint string from port 80
     packets: int = 0
     last_seen: float = 0.0
     is_gateway: bool = False
@@ -449,25 +452,96 @@ class Device:
         return kind_label(self.kind)
 
 
-def infer_kind(dev: Device) -> Optional[str]:
-    # mDNS is most authoritative
+# Evidence-strength weights. A kind only gets assigned if its summed
+# evidence reaches MIN_CONFIDENCE. Single weak signals (one open port)
+# are no longer enough to pin a label on a device — that was the source
+# of Tesira false positives on devices that just happened to listen on
+# port 4455.
+_EV_MDNS_RESPONSE = 70   # device announced the service via mDNS — strong
+_EV_OUI           = 35   # MAC prefix matches a known vendor
+_EV_PORT          = 18   # one matching port — weak; need 2+ to classify alone
+_EV_HTTP_BANNER   = 70   # web GUI title/server header confirms vendor
+_EV_GATEWAY_FLAG  = 100  # we already know this is the gateway
+
+MIN_CONFIDENCE    = 40   # below this, leave kind=None rather than guess
+
+
+def infer_kind(dev: Device) -> tuple[Optional[str], int]:
+    """Evidence-based classification. Returns (kind, confidence_0_to_100)."""
+    scores: dict[str, int] = {}
+
+    def add(kind: Optional[str], strength: int):
+        if not kind:
+            return
+        scores[kind] = scores.get(kind, 0) + strength
+
+    # Gateway flag — definitively a gateway.
+    if dev.is_gateway:
+        add("gateway", _EV_GATEWAY_FLAG)
+
+    # mDNS service announcements (pre-filtered to RESPONSES by sniffer).
     for service in dev.mdns_services:
         sb = service.encode() if isinstance(service, str) else service
         for needle, kind in MDNS_KIND:
             if needle in sb:
-                return kind
-    # Ports next
+                add(kind, _EV_MDNS_RESPONSE)
+                break  # one hit per service is enough
+
+    # Open ports. Each match is weak alone; needs 2+ or a corroborating
+    # OUI / mDNS to actually pin the kind.
     for p in dev.ports:
         if p in PORT_KIND:
-            return PORT_KIND[p]
-    # OUI / vendor last
+            add(PORT_KIND[p], _EV_PORT)
+
+    # OUI — vendor association from MAC prefix.
     if dev.mac:
         _, kind = oui_lookup(dev.mac)
-        if kind:
-            return kind
-    if dev.is_gateway:
-        return "gateway"
-    return None
+        add(kind, _EV_OUI)
+
+    # HTTP banner fingerprint (populated by HTTP probe).
+    if dev.http_banner:
+        banner = dev.http_banner.lower()
+        for sig, kind in _HTTP_BANNER_SIGS:
+            if sig in banner:
+                add(kind, _EV_HTTP_BANNER)
+                break
+
+    if not scores:
+        return None, 0
+    best = max(scores, key=lambda k: scores[k])
+    confidence = min(100, scores[best])
+    if confidence < MIN_CONFIDENCE:
+        return None, confidence
+    return best, confidence
+
+
+# HTTP banner substring -> kind. Lowercased lookup. Covers headers like
+# `Server:` and HTML <title>/meta tags. Add new fingerprints here.
+_HTTP_BANNER_SIGS: list[tuple[str, str]] = [
+    ("q-sys",      "qsys"),
+    ("qsys",       "qsys"),
+    ("qsc audio",  "qsys"),
+    ("crestron",   "crestron"),
+    ("biamp",      "biamp"),
+    ("tesira",     "biamp"),
+    ("audinate",   "dante"),
+    ("extron",     "extron"),
+    ("amx",        "amx"),
+    ("shure",      "shure"),
+    ("clearone",   "clearone"),
+    ("polycom",    "videoconf"),
+    ("poly ",      "videoconf"),
+    ("cisco webex","videoconf"),
+    ("vaddio",     "camera"),
+    ("axis",       "camera"),
+    ("hikvision",  "camera"),
+    ("dahua",      "camera"),
+    ("samsung",    "display"),
+    ("nec ",       "display"),
+    ("panasonic",  "display"),
+    ("barco",      "display"),
+    ("epson",      "display"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +627,78 @@ def resolve_hostname(ip: str) -> Optional[str]:
     if host and host != ip:
         return host
     return _nbstat(ip)
+
+
+# ---------------------------------------------------------------------------
+# HTTP banner grab — fetch the device's web GUI on port 80 and extract a
+# short fingerprint from the response (Server header + HTML <title>). This
+# is the highest-signal way to confirm AV gear: every Q-SYS Core, Crestron
+# DM, Biamp Tesira, Shure ANIUSB, etc. ships a web admin UI whose title or
+# Server banner names the product.
+# ---------------------------------------------------------------------------
+
+_HTTP_REQ = (
+    b"GET / HTTP/1.0\r\n"
+    b"Host: %s\r\n"
+    b"User-Agent: NICSwitcher-AVScan/1.0\r\n"
+    b"Connection: close\r\n"
+    b"\r\n"
+)
+_TITLE_RE = re.compile(rb"<title[^>]*>([^<]{1,200})</title>", re.IGNORECASE)
+_SERVER_RE = re.compile(rb"^Server:\s*([^\r\n]{1,200})", re.IGNORECASE | re.MULTILINE)
+_META_GEN_RE = re.compile(
+    rb'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']{1,200})["\']',
+    re.IGNORECASE,
+)
+
+
+def http_banner(ip: str, port: int = 80, timeout: float = 1.5) -> Optional[str]:
+    """Fetch http://ip:port/ and return a short fingerprint string composed
+    of (Server header) + (HTML title) + (meta generator). Returns None if
+    the port is closed, refuses the connection, or doesn't speak HTTP. The
+    short timeout keeps a full /24 sweep under ~10s when most ports refuse.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((ip, port))
+        s.sendall(_HTTP_REQ % ip.encode())
+        chunks: list[bytes] = []
+        # Cap at 32 KB — enough for headers + title, avoids slurping
+        # massive admin UIs from cooperative servers.
+        deadline = time.time() + timeout
+        while time.time() < deadline and sum(len(c) for c in chunks) < 32_768:
+            try:
+                buf = s.recv(4096)
+            except socket.timeout:
+                break
+            if not buf:
+                break
+            chunks.append(buf)
+        s.close()
+    except (OSError, socket.timeout):
+        return None
+    body = b"".join(chunks)
+    if not body:
+        return None
+    parts: list[str] = []
+    m = _SERVER_RE.search(body)
+    if m:
+        parts.append(m.group(1).decode("latin-1", "ignore").strip())
+    m = _TITLE_RE.search(body)
+    if m:
+        title = m.group(1).decode("latin-1", "ignore").strip()
+        # Collapse whitespace/HTML entities a little
+        title = re.sub(r"\s+", " ", title)
+        if title and title.lower() not in {"document", "untitled"}:
+            parts.append(title)
+    m = _META_GEN_RE.search(body)
+    if m:
+        parts.append("gen=" + m.group(1).decode("latin-1", "ignore").strip())
+    if not parts:
+        return None
+    out = " · ".join(parts)
+    return out[:160]
 
 
 def default_gateway_for(bind_ip: str) -> Optional[str]:

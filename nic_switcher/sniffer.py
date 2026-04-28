@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .discover import (
-    Device, MDNS_KIND, default_gateway_for, infer_kind, is_av, oui_lookup,
-    read_arp_cache, resolve_hostname,
+    Device, MDNS_KIND, default_gateway_for, http_banner, infer_kind, is_av,
+    oui_lookup, read_arp_cache, resolve_hostname,
 )
 
 
@@ -116,16 +116,20 @@ class Sniffer:
                     mac=d.mac,
                     vendor=d.vendor,
                     kind=d.kind,
+                    confidence=d.confidence,
                     hostname=d.hostname,
                     ports=set(d.ports),
                     mdns_services=set(d.mdns_services),
+                    http_banner=d.http_banner,
                     packets=d.packets,
                     last_seen=d.last_seen,
                     is_gateway=d.is_gateway,
                 ))
         for d in snaps:
-            if not d.kind:
-                d.kind = infer_kind(d)
+            # Always recompute against latest evidence. infer_kind returns
+            # None when the score is below MIN_CONFIDENCE so we don't
+            # mislabel devices on weak/single signals.
+            d.kind, d.confidence = infer_kind(d)
         # Sort order: gateway first, then AV devices, then everything else by
         # traffic/IP. Among AV devices, Q-SYS > Crestron > Biamp > Dante >
         # others reflects typical AV deployment priority.
@@ -194,12 +198,16 @@ class Sniffer:
                     dev.vendor = vendor
                 if self.gateway_ip and ip == self.gateway_ip:
                     dev.is_gateway = True
-                dev.kind = infer_kind(dev)
+                dev.kind, dev.confidence = infer_kind(dev)
         # Fire hostname resolution in the background so the UI gets names
         # without blocking the merge call. Safe to run concurrently with
         # further sniff activity — we only mutate `hostname` on existing
         # devices under the lock.
         threading.Thread(target=self._resolve_hostnames_bg, daemon=True).start()
+        # HTTP banner grab on port 80 — the highest-signal way to confirm
+        # AV gear (every Q-SYS Core / Crestron DM / Tesira / Shure ANIUSB
+        # ships a web UI whose title or Server header names the product).
+        threading.Thread(target=self._grab_http_banners_bg, daemon=True).start()
         self._emit()
         return added
 
@@ -228,6 +236,40 @@ class Sniffer:
                         dev.hostname = host
                         resolved += 1
         if resolved:
+            self._emit()
+
+    def _grab_http_banners_bg(self):
+        """Probe port 80 on every device that doesn't already have a banner.
+        Strongest signal we can fetch passively for AV gear identification —
+        Q-SYS / Crestron / Biamp / Shure / Polycom all ship a web admin UI
+        whose <title> or Server header names the product."""
+        import concurrent.futures
+        with self._lock:
+            targets = [
+                ip for ip, d in self.devices.items()
+                if not d.http_banner and ip != self.bind_ip
+            ]
+        if not targets:
+            return
+        with concurrent.futures.ThreadPoolExecutor(max_workers=24) as ex:
+            futs = {ex.submit(http_banner, ip): ip for ip in targets}
+            grabbed = 0
+            for fut in concurrent.futures.as_completed(futs):
+                ip = futs[fut]
+                try:
+                    banner = fut.result()
+                except Exception:
+                    banner = None
+                if not banner:
+                    continue
+                with self._lock:
+                    dev = self.devices.get(ip)
+                    if dev is not None:
+                        dev.http_banner = banner
+                        # Refresh classification with the new evidence.
+                        dev.kind, dev.confidence = infer_kind(dev)
+                        grabbed += 1
+        if grabbed:
             self._emit()
 
     def top_subnets(self, n: int = 3) -> list[tuple[str, int]]:
@@ -346,15 +388,34 @@ class Sniffer:
                     if dev is not None and port < 49152:  # ignore ephemeral
                         dev.ports.add((proto_name, port))
 
-                # mDNS sniff (UDP 5353)
-                if proto == 17 and (sport == 5353 or dport == 5353) and len(data) > payload_off:
+                # mDNS sniff (UDP 5353) — SERVICE classification rules:
+                #   1. Skip OUR OWN outgoing probes — the raw socket captures
+                #      packets we send, and substring-matching them would tag
+                #      our own machine as Q-SYS/Crestron/Biamp/etc.
+                #   2. Only match in mDNS RESPONSES (QR bit = 1). Queries can
+                #      legitimately contain service names without that service
+                #      being hosted on the source.
+                #   3. Match against the wire-encoded label form
+                #      (e.g. \x05_qsys\x04_tcp) instead of the dotted form
+                #      so we're matching the way mDNS actually serializes,
+                #      and random payload bytes can't accidentally contain
+                #      "_qsys" and trigger a false tag.
+                if (proto == 17 and (sport == 5353 or dport == 5353)
+                        and len(data) > payload_off + 12
+                        and src != self.bind_ip):
                     payload = data[payload_off:]
-                    for needle, _kind in MDNS_KIND:
-                        if needle in payload:
-                            dev = self.devices.get(src) if not _is_skip(src) else None
-                            if dev is not None:
-                                dev.mdns_services.add(needle.decode("ascii", "ignore"))
-                    # try to extract a hostname from the first PTR answer
+                    flags_byte = payload[2] if len(payload) > 2 else 0
+                    is_response = bool(flags_byte & 0x80)
+                    if is_response:
+                        for needle, _kind in MDNS_KIND:
+                            if _wire_label(needle) in payload:
+                                dev = self.devices.get(src) if not _is_skip(src) else None
+                                if dev is not None:
+                                    dev.mdns_services.add(
+                                        needle.decode("ascii", "ignore")
+                                    )
+                    # Hostname extraction is safe even on queries (it grabs
+                    # the first .local label, not service-classification).
                     host = _extract_mdns_hostname(payload)
                     if host:
                         dev = self.devices.get(src) if not _is_skip(src) else None
@@ -369,6 +430,20 @@ class Sniffer:
             cb()
         except Exception:
             pass
+
+
+def _wire_label(dotted: bytes) -> bytes:
+    """Convert a dotted DNS name like b'_qsys._tcp' into the wire-encoded
+    label sequence b'\\x05_qsys\\x04_tcp'. Used to match service types in
+    mDNS payloads the way they're actually serialized — bare substring
+    matches against random bytes were the source of phantom Tesira tags.
+    """
+    out = b""
+    for part in dotted.split(b"."):
+        if not part:
+            continue
+        out += bytes([len(part)]) + part
+    return out
 
 
 def _extract_mdns_hostname(payload: bytes) -> Optional[str]:

@@ -110,6 +110,6 @@ class AppConfig:
 
 def _default_presets() -> list[Preset]:
     return [
-        Preset(name="Somerset", ip="10.17.75.240", prefix=24, gateway="10.17.75.1"),
+        Preset(name="Connect NZ", ip="10.17.75.240", prefix=24, gateway="10.17.75.1"),
         Preset(name="DHCP", ip="", prefix=0),
     ]

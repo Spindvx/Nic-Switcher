@@ -295,8 +295,10 @@ QFrame#presetCard:hover, QFrame#deviceCard:hover {{
     border-color: {BORDER_STRONG};
 }}
 QFrame#presetCardActive {{
-    /* Active preset — thin pastel-red border + faint glow background. */
-    background: {SELECT_GLOW_RGBA};
+    /* Active preset — same card surface as inactive, pastel-red border
+       only. The green LED on the left side indicates "live"; the border
+       indicates "this preset is currently applied". */
+    background: {BG_CARD};
     border: 1px solid {SELECT_GLOW};
     border-radius: {RADIUS_MD}px;
 }}

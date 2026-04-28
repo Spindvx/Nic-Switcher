@@ -25,11 +25,21 @@ from .theme import KIND_COLORS, STYLE
 # Pill badge for device kind
 # ---------------------------------------------------------------------------
 
-def _kind_pill(kind: Optional[str]) -> QLabel:
+def _kind_pill(kind: Optional[str], confidence: int = 100) -> QLabel:
+    """Kind badge. When confidence < 70 we append a '?' to signal that the
+    classification is based on weak/partial evidence (single port, OUI
+    only, etc.) rather than a confirmed mDNS/banner hit."""
     text = kind_label(kind).upper()
+    if kind and 0 < confidence < 70:
+        text = f"{text}?"
     color = KIND_COLORS.get(kind or "host", theme.TEXT_MUTED)
     lbl = QLabel(text)
     lbl.setObjectName("pill")
+    if confidence and confidence < 70:
+        lbl.setToolTip(
+            f"Tentative match — {confidence}% confidence. Try the Probe "
+            "button or open the device's web GUI to confirm."
+        )
     # Tinted background using kind color — pale translucent
     bg_rgba = _hex_to_rgba(color, alpha=36)
     border_rgba = _hex_to_rgba(color, alpha=120)
@@ -110,8 +120,19 @@ class DeviceRow(QFrame):
             meta.setObjectName("subtle")
             meta.setWordWrap(True)
 
-        # kind pill
-        pill = _kind_pill(dev.kind)
+        # HTTP banner — single line below meta if we got one. Highest-signal
+        # AV-gear evidence; show prominently.
+        banner_label: Optional[QLabel] = None
+        if dev.http_banner:
+            banner_label = QLabel(dev.http_banner)
+            banner_label.setObjectName("subtle")
+            banner_label.setWordWrap(True)
+            banner_label.setStyleSheet(
+                f"color: {theme.TEXT_BODY}; font-size: 11px; font-style: italic;"
+            )
+
+        # kind pill (with confidence indicator if not 100)
+        pill = _kind_pill(dev.kind, dev.confidence)
 
         # Left column: LED
         left_col = QVBoxLayout()
@@ -133,6 +154,8 @@ class DeviceRow(QFrame):
         mid_col.addWidget(mono)
         if meta is not None:
             mid_col.addWidget(meta)
+        if banner_label is not None:
+            mid_col.addWidget(banner_label)
 
         # Open button — launches the device's web GUI in the default browser.
         # AV gear is overwhelmingly HTTP (self-signed HTTPS is rare and adds
@@ -251,15 +274,9 @@ class ScanDialog(GlassDialog):
         self.sniff_chip = QLabel("IDLE")
         self.sniff_chip.setObjectName("pill")
 
-        self.av_only = QCheckBox("AV only")
-        self.av_only.setChecked(True)
-        self.av_only.setToolTip("Show Q-SYS, Crestron, Biamp, Dante, etc. — hide hosts/laptops/printers")
-        self.av_only.stateChanged.connect(self._mark_dirty)
-
         header = QHBoxLayout()
         header.addLayout(title_col)
         header.addStretch(1)
-        header.addWidget(self.av_only)
         header.addWidget(self.sniff_chip)
 
         # Stat strip
@@ -575,12 +592,9 @@ class ScanDialog(GlassDialog):
                 return query in hay
             devs = [d for d in devs if _match(d)]
 
-        # Split into AV and Other so we can render section headers.
+        # Split into AV + Other section headers — AV always renders first.
         av_devs = [d for d in devs if is_av(d.kind) or d.is_gateway]
         other_devs = [d for d in devs if not (is_av(d.kind) or d.is_gateway)]
-
-        if self.av_only.isChecked():
-            other_devs = []
 
         if av_devs:
             self._insert_section("PRO AV", f"{len(av_devs)} device(s)")
@@ -596,16 +610,6 @@ class ScanDialog(GlassDialog):
                 row.use_subnet.connect(self.apply_subnet)
                 row.open_web.connect(self._on_open_web)
                 self.list_layout.insertWidget(self.list_layout.count() - 1, row)
-        if not av_devs and not other_devs and self.av_only.isChecked():
-            hint = QLabel(
-                "No Pro AV devices detected yet. Hit Probe or uncheck 'AV only' "
-                "to see all hosts."
-            )
-            hint.setObjectName("subtle")
-            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            hint.setContentsMargins(0, 30, 0, 30)
-            hint.setWordWrap(True)
-            self.list_layout.insertWidget(self.list_layout.count() - 1, hint)
 
     def _insert_section(self, title: str, count_text: str):
         row = QWidget()

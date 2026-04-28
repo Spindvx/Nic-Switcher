@@ -116,8 +116,10 @@ class PresetCard(QFrame):
         if sub is not None:
             text.addWidget(sub)
 
-        # status LED (left side)
-        led = _led(theme.ACCENT if is_active else theme.TEXT_DIM, 10)
+        # Status LED (left side) — green halo when this preset is currently
+        # live, dim grey otherwise. Green is the universal "running / on /
+        # healthy" signal here, kept independent of the brand accent.
+        led = _led(theme.SUCCESS if is_active else theme.TEXT_DIM, 10)
 
         apply_btn = QPushButton("Active" if is_active else "Apply")
         apply_btn.setObjectName("accent")
