@@ -187,6 +187,26 @@ class Sniffer:
             self._emit()
         return touched
 
+    def ensure_gateway(self, bind_ip: str) -> Optional[str]:
+        """Look up the default gateway for `bind_ip` and pre-register it as
+        a known device with is_gateway=True. Called from the scan dialog
+        on open + after every Probe so the gateway appears even when the
+        user hasn't started passive sniffing (which is what previously
+        owned the gateway-flag wiring)."""
+        gw = default_gateway_for(bind_ip)
+        if not gw:
+            return None
+        with self._lock:
+            self.gateway_ip = gw
+            dev = self.devices.get(gw)
+            if dev is None:
+                dev = Device(ip=gw)
+                self.devices[gw] = dev
+            dev.is_gateway = True
+            dev.kind, dev.confidence = infer_kind(dev)
+        self._emit()
+        return gw
+
     def merge_arp(self) -> int:
         """Pull the Windows ARP cache and fill in MAC/vendor for known IPs. Returns rows added."""
         added = 0

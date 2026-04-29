@@ -402,16 +402,30 @@ class ScanDialog(GlassDialog):
         outer.addWidget(root)
 
 
-        # refresh pump
+        # refresh pump — 1500ms is the "steady" cadence; rebuild logic
+        # below also short-circuits when the IP set hasn't changed, so
+        # the list only flickers when devices actually come and go.
         self._timer = QTimer(self)
-        self._timer.setInterval(500)
+        self._timer.setInterval(1500)
         self._timer.timeout.connect(self._refresh)
         self._timer.start()
+        self._last_render_signature: tuple = ()
 
         self.sniffer.on_update = self._mark_dirty
         self._dirty = True
         self._update_sniff_chip()
         self._refresh()
+
+        # Pre-populate the gateway so it shows up in the scan list even
+        # before the user starts passive sniffing. Without this, the
+        # gateway only appeared once `Sniffer.start()` ran.
+        if self.bind_ip:
+            try:
+                gw = self.sniffer.ensure_gateway(self.bind_ip)
+                if gw:
+                    self._dirty = True
+            except Exception:
+                pass
 
         # Kick off Dante mDNS browsing in the background.
         if self._dante_available:
@@ -517,6 +531,9 @@ class ScanDialog(GlassDialog):
                 prefix = ".".join(parts[:3])
                 discover.ping_sweep(prefix, timeout_ms=300, workers=96)
             added = self.sniffer.merge_arp()
+            # Re-flag the gateway after the merge — ensure_gateway pins
+            # is_gateway=True even if merge_arp's classification stomped it.
+            self.sniffer.ensure_gateway(self.bind_ip)
             self.probe_status.emit(
                 f"Probe complete — mDNS + {av_sent} AV broadcasts + ping sweep, "
                 f"{added} new ARP entries.",
@@ -564,6 +581,22 @@ class ScanDialog(GlassDialog):
         if not self._dirty and running:
             return
         self._dirty = False
+
+        # Skip rebuild entirely when nothing meaningful has changed since
+        # last render. Signature = (filter text, sorted IP+kind+confidence
+        # tuples). Stats line still updates above; only the device-list
+        # rebuild is what causes visible flicker, so we cut it.
+        devs_for_sig = self.sniffer.device_list()
+        signature = (
+            (self.search.text() or "").strip().lower(),
+            tuple(sorted(
+                (d.ip, d.kind, d.confidence, d.hostname or "")
+                for d in devs_for_sig
+            )),
+        )
+        if signature == self._last_render_signature:
+            return
+        self._last_render_signature = signature
 
         # Suspend paint while we tear down + rebuild the device list. Without
         # this, Qt paints intermediate states where rows have been added to

@@ -195,6 +195,15 @@ class AboutDialog(GlassDialog):
             f"color: {theme.TEXT_BODY}; font-size: 12px; line-height: 18px;"
         )
 
+        # Run-at-boot toggle — survives reboot via HKCU\...\Run
+        self._run_at_boot = QCheckBox("Run at Windows startup")
+        self._run_at_boot.setToolTip(
+            "Auto-launch NIC Switcher when you log in to Windows. Stored "
+            "per-user (HKCU\\...\\Run) — no admin needed to toggle."
+        )
+        self._run_at_boot.setChecked(diagnostics.is_run_at_boot())
+        self._run_at_boot.toggled.connect(self._toggle_run_at_boot)
+
         # Action buttons
         gh_btn = QPushButton("Open on GitHub")
         gh_btn.setObjectName("ghost")
@@ -250,6 +259,8 @@ class AboutDialog(GlassDialog):
         body.addWidget(self.build_title_strip())
         body.addLayout(brand_row)
         body.addWidget(tagline)
+        body.addSpacing(4)
+        body.addWidget(self._run_at_boot)
         body.addStretch(1)
         body.addLayout(btn_row)
         body.addWidget(self._status)
@@ -285,6 +296,19 @@ class AboutDialog(GlassDialog):
             f"color: {theme.SUCCESS if ok else theme.DANGER}; "
             f"font-size: 11px; font-weight: 600;"
         )
+
+    def _toggle_run_at_boot(self, checked: bool):
+        ok, msg = diagnostics.set_run_at_boot(checked)
+        self._status.setText(msg)
+        self._status.setStyleSheet(
+            f"color: {theme.SUCCESS if ok else theme.DANGER}; "
+            f"font-size: 11px; font-weight: 600;"
+        )
+        if not ok:
+            # Toggle failed — revert the checkbox so its state matches reality.
+            self._run_at_boot.blockSignals(True)
+            self._run_at_boot.setChecked(diagnostics.is_run_at_boot())
+            self._run_at_boot.blockSignals(False)
 
 
 def _form_label(text: str) -> QLabel:

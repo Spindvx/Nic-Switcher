@@ -8,6 +8,7 @@ python -m PyInstaller ^
   --windowed ^
   --name "NICSwitcher" ^
   --uac-admin ^
+  --icon "resources/nic-switcher.ico" ^
   --hidden-import PyQt6.sip ^
   --add-data "vendor/dhcpsrv;dhcpsrv" ^
   --add-data "resources;resources" ^

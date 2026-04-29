@@ -112,7 +112,7 @@ QWidget {{
 
 #root {{
     background: {BG_ROOT};
-    border: 1px solid {BORDER};
+    border: 0;            /* No outer hairline — the rounded fill is the edge */
     border-radius: {RADIUS_LG}px;
 }}
 

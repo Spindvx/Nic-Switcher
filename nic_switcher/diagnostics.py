@@ -177,3 +177,79 @@ def open_log_folder() -> tuple[bool, str]:
         return True, f"Opened {p}"
     except Exception as e:
         return False, f"Could not open {p}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Run-at-boot toggle (Windows HKCU\...\Run registry entry)
+# ---------------------------------------------------------------------------
+
+_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_RUN_VALUE = "NICSwitcher"
+
+
+def _running_exe_path() -> Optional[str]:
+    """Return the absolute path to the launching exe when frozen
+    (PyInstaller --onefile bundles set sys.frozen=True and sys.executable
+    points at the wrapper exe). Returns None when running from source —
+    Run-at-boot only makes sense for the packaged build."""
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(sys.executable)
+    return None
+
+
+def is_run_at_boot() -> bool:
+    try:
+        import winreg
+    except ImportError:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+            try:
+                winreg.QueryValueEx(key, _RUN_VALUE)
+                return True
+            except FileNotFoundError:
+                return False
+            except OSError:
+                return False
+    except OSError:
+        return False
+
+
+def set_run_at_boot(enable: bool) -> tuple[bool, str]:
+    """Toggle the HKCU\\...\\Run\\NICSwitcher value pointing at this exe.
+
+    HKCU (current user) — no admin needed, no UAC prompt. Survives
+    reboot. Removed cleanly when the user disables it. Has no effect
+    when running from source (returns a friendly message).
+    """
+    try:
+        import winreg
+    except ImportError:
+        return False, "winreg unavailable (Windows-only)"
+
+    exe = _running_exe_path()
+    if not exe and enable:
+        return False, (
+            "Run at boot only works for the packaged build (the .exe). "
+            "When running from source there's no fixed launcher path."
+        )
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_SET_VALUE,
+        ) as key:
+            if enable:
+                # Quote the path so spaces in 'NIC Switcher' don't break
+                # the auto-launch.
+                winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ, f'"{exe}"')
+                return True, f"Run at boot enabled — {exe}"
+            else:
+                try:
+                    winreg.DeleteValue(key, _RUN_VALUE)
+                except FileNotFoundError:
+                    pass
+                return True, "Run at boot disabled"
+    except PermissionError:
+        return False, "Registry write denied"
+    except OSError as e:
+        return False, f"Registry error: {e}"
