@@ -5,13 +5,16 @@ import ipaddress
 from typing import Optional
 
 from PyQt6.QtCore import QPoint, QSize, Qt
-from PyQt6.QtGui import QColor, QPainter, QPainterPath
+from PyQt6.QtGui import QColor, QGuiApplication, QDesktopServices, QPainter, QPainterPath
+from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
+from . import APP_NAME, __version__
+from . import diagnostics
 from . import firewall, icons, mac as mac_mod, nic as nic_mod, theme
 from . import discover
 from .blur import enable_blur, try_enable_mica
@@ -21,6 +24,9 @@ from .validate import (
     is_valid_ipv4, is_valid_mask, mask_to_prefix, prefix_to_mask,
     validate_dhcp_range, validate_preset,
 )
+
+
+GITHUB_URL = "https://github.com/Spindvx/Nic-Switcher"
 
 
 def _display_mac_field(stored: str) -> str:
@@ -127,6 +133,153 @@ def _apply_window_chrome(dlg: QDialog):
     except Exception:
         pass
     dlg.setSizeGripEnabled(False)
+
+
+# ---------------------------------------------------------------------------
+# About dialog — small chrome + version + diagnostics shortcuts.
+# ---------------------------------------------------------------------------
+
+class AboutDialog(GlassDialog):
+    """Tiny info dialog: app name, version, GitHub link, and the two
+    most-asked-for support shortcuts (open log folder, export
+    diagnostics)."""
+
+    def __init__(self, parent=None):
+        super().__init__(title="About", parent=parent)
+        self.resize(420, 320)
+
+        # Brand row
+        brand = QLabel()
+        brand.setPixmap(icons.brand_tray_icon(56).pixmap(56, 56))
+        brand.setFixedSize(56, 56)
+
+        title = QLabel(APP_NAME)
+        title.setStyleSheet(
+            f"color: {theme.TEXT_PRIMARY}; font-size: 20px; "
+            f"font-weight: 600; letter-spacing: -0.3px;"
+        )
+        ver = QLabel(f"v{__version__}")
+        ver.setObjectName("subtle")
+        ver.setStyleSheet(
+            f"color: {theme.TEXT_SECOND}; font-size: 12px;"
+        )
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(2)
+        info_col.addWidget(title)
+        info_col.addWidget(ver)
+
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(14)
+        brand_row.addWidget(brand)
+        brand_row.addLayout(info_col, 1)
+
+        # Tagline
+        tagline = QLabel(
+            "Pro AV network utility — NIC presets, MAC switching, DHCP server, "
+            "and AV-focused network discovery. Windows-only."
+        )
+        tagline.setObjectName("subtle")
+        tagline.setWordWrap(True)
+        tagline.setStyleSheet(
+            f"color: {theme.TEXT_BODY}; font-size: 12px; line-height: 18px;"
+        )
+
+        # Action buttons
+        gh_btn = QPushButton("Open on GitHub")
+        gh_btn.setObjectName("ghost")
+        gh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        gh_btn.clicked.connect(self._open_github)
+
+        copy_btn = QPushButton(f"Copy v{__version__}")
+        copy_btn.setObjectName("ghost")
+        copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_btn.clicked.connect(self._copy_version)
+
+        log_btn = QPushButton("Open log folder")
+        log_btn.setObjectName("ghost")
+        log_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        log_btn.clicked.connect(self._open_log_folder)
+
+        diag_btn = QPushButton("Export diagnostics")
+        diag_btn.setObjectName("accent")
+        diag_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        diag_btn.clicked.connect(self._export_diagnostics)
+
+        # Status line for feedback after copy / export
+        self._status = QLabel("")
+        self._status.setObjectName("subtle")
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(
+            f"color: {theme.SUCCESS}; font-size: 11px; font-weight: 600;"
+        )
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addWidget(gh_btn)
+        btn_row.addWidget(copy_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(log_btn)
+        btn_row.addWidget(diag_btn)
+
+        # Close
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("ghost")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.accept)
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_row.addWidget(close_btn)
+
+        # Assemble
+        root = QWidget(self)
+        root.setObjectName("root")
+        body = QVBoxLayout(root)
+        body.setContentsMargins(22, 12, 22, 18)
+        body.setSpacing(12)
+        body.addWidget(self.build_title_strip())
+        body.addLayout(brand_row)
+        body.addWidget(tagline)
+        body.addStretch(1)
+        body.addLayout(btn_row)
+        body.addWidget(self._status)
+        body.addLayout(close_row)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.addWidget(root)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 110))
+        root.setGraphicsEffect(shadow)
+
+    # ── handlers ──
+    def _open_github(self):
+        QDesktopServices.openUrl(QUrl(GITHUB_URL))
+        self._status.setText(f"Opened {GITHUB_URL}")
+
+    def _copy_version(self):
+        clip = QGuiApplication.clipboard()
+        clip.setText(f"{APP_NAME} v{__version__}")
+        self._status.setText("Version copied to clipboard")
+
+    def _open_log_folder(self):
+        ok, msg = diagnostics.open_log_folder()
+        self._status.setText(msg)
+        self._status.setStyleSheet(
+            f"color: {theme.SUCCESS if ok else theme.DANGER}; "
+            f"font-size: 11px; font-weight: 600;"
+        )
+
+    def _export_diagnostics(self):
+        ok, msg, path = diagnostics.export_bundle()
+        self._status.setText(msg)
+        self._status.setStyleSheet(
+            f"color: {theme.SUCCESS if ok else theme.DANGER}; "
+            f"font-size: 11px; font-weight: 600;"
+        )
 
 
 def _form_label(text: str) -> QLabel:

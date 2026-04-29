@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
+from . import APP_NAME, __version__
 from . import dhcp as dhcp_mod
+from . import diagnostics
 from .config import AppConfig
 from .icon import make_tray_icon
 from .popup import Popup
@@ -19,7 +21,7 @@ class Tray(QSystemTrayIcon):
         self.popup = Popup(config)
         self.app.focusChanged.connect(self._on_focus_changed)
 
-        self.setToolTip("NIC Switcher")
+        self.setToolTip(f"{APP_NAME} v{__version__}")
         menu = QMenu()
         menu.setStyleSheet(STYLE)
 
@@ -31,6 +33,19 @@ class Tray(QSystemTrayIcon):
         self.dhcp_action = QAction("Start DHCP server", menu)
         self.dhcp_action.triggered.connect(self._toggle_dhcp)
         menu.addAction(self.dhcp_action)
+
+        menu.addSeparator()
+        log_action = QAction("Open log folder", menu)
+        log_action.triggered.connect(self._open_log_folder)
+        menu.addAction(log_action)
+
+        diag_action = QAction("Export diagnostics…", menu)
+        diag_action.triggered.connect(self._export_diagnostics)
+        menu.addAction(diag_action)
+
+        about_action = QAction("About NIC Switcher", menu)
+        about_action.triggered.connect(self._show_about)
+        menu.addAction(about_action)
 
         menu.addSeparator()
         quit_action = QAction("Quit NIC Switcher", menu)
@@ -85,6 +100,30 @@ class Tray(QSystemTrayIcon):
     def _sync_menu(self):
         running = dhcp_mod.is_running()
         self.dhcp_action.setText("Stop DHCP server" if running else "Start DHCP server")
+
+    def _open_log_folder(self):
+        ok, msg = diagnostics.open_log_folder()
+        self.showMessage(
+            APP_NAME, msg,
+            QSystemTrayIcon.MessageIcon.Information
+            if ok else QSystemTrayIcon.MessageIcon.Warning,
+            3000,
+        )
+
+    def _export_diagnostics(self):
+        ok, msg, _path = diagnostics.export_bundle()
+        self.showMessage(
+            APP_NAME, msg,
+            QSystemTrayIcon.MessageIcon.Information
+            if ok else QSystemTrayIcon.MessageIcon.Warning,
+            5000,
+        )
+
+    def _show_about(self):
+        # Lazy import — keeps tray.py from pulling the dialog tree at startup.
+        from .dialogs import AboutDialog
+        dlg = AboutDialog(parent=self.popup if self.popup.isVisible() else None)
+        dlg.exec()
 
     def _quit(self):
         try:

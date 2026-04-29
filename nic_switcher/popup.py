@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
+from . import APP_NAME, __version__
 from . import dhcp as dhcp_mod
 from . import icons as icons
 from . import mac as mac_mod
@@ -236,8 +237,26 @@ class Popup(QWidget):
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
             self.hide_animated()
-        else:
-            super().keyPressEvent(e)
+            return
+        # Ctrl+R refreshes all data (NICs, presets, DHCP state).
+        if (e.modifiers() & Qt.KeyboardModifier.ControlModifier
+                and e.key() == Qt.Key.Key_R):
+            self.refresh_all()
+            self._set_status("Refreshed", "ok")
+            return
+        # Ctrl+1..9 applies the Nth preset (1-indexed). Skip if a text input
+        # has focus so users typing IPs / MACs don't trip the shortcut.
+        if (e.modifiers() & Qt.KeyboardModifier.ControlModifier
+                and Qt.Key.Key_1 <= e.key() <= Qt.Key.Key_9):
+            focused = self.focusWidget()
+            if isinstance(focused, QLineEdit):
+                super().keyPressEvent(e)
+                return
+            idx = e.key() - Qt.Key.Key_1   # 0-indexed
+            if 0 <= idx < len(self.config.presets):
+                self._apply_preset(self.config.presets[idx])
+            return
+        super().keyPressEvent(e)
 
     # ---- layout ----
     def _build_ui(self):
@@ -507,8 +526,9 @@ class Popup(QWidget):
         brand.setFixedHeight(38)
         brand.setToolTip("Spindux Enterprise")
 
-        hint = QLabel("Esc to close")
+        hint = QLabel(f"v{__version__}  ·  Esc to close")
         hint.setObjectName("subtle")
+        hint.setToolTip(f"{APP_NAME} v{__version__} — right-click tray icon for About / log folder / diagnostics")
         quit_btn = QPushButton("Quit")
         quit_btn.setObjectName("ghost")
         quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
