@@ -340,13 +340,15 @@ class ScanDialog(GlassDialog):
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.clicked.connect(self._toggle_sniff)
 
-        self.probe_btn = QPushButton("  Probe (mDNS + ping sweep)")
+        self.probe_btn = QPushButton("  Probe (mDNS + AV + ping sweep)")
         self.probe_btn.setIcon(icons.search(15, theme.TEXT_BODY))
         self.probe_btn.setIconSize(QSize(15, 15))
         self.probe_btn.setFixedHeight(34)
         self.probe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.probe_btn.setToolTip(
-            "Broadcast mDNS + ping-sweep the local /24 to flush silent devices"
+            "Broadcast mDNS + AV-protocol discovery (Q-SYS QDP / Crestron "
+            "CSDP / Shure SSC / Tesira) + ping-sweep the local /24 to flush "
+            "silent devices"
         )
         self.probe_btn.clicked.connect(self._probe)
 
@@ -510,14 +512,20 @@ class ScanDialog(GlassDialog):
 
     def _probe_worker(self):
         try:
+            # Three-way probe: mDNS for self-announcing services, AV-protocol
+            # broadcasts for proprietary discovery (Q-SYS QDP, Crestron CSDP,
+            # Shure SSC, Biamp Tesira), and a /24 ping sweep to flush ARP.
             discover.mdns_probe(self.bind_ip)
+            av_sent = discover.av_probe(self.bind_ip)
             parts = self.bind_ip.split(".")
             if len(parts) == 4:
                 prefix = ".".join(parts[:3])
                 discover.ping_sweep(prefix, timeout_ms=300, workers=96)
             added = self.sniffer.merge_arp()
             self.probe_status.emit(
-                f"Probe complete — {added} new ARP entries merged.", "ok"
+                f"Probe complete — mDNS + {av_sent} AV broadcasts + ping sweep, "
+                f"{added} new ARP entries.",
+                "ok",
             )
         except Exception as e:
             self.probe_status.emit(f"Probe error: {e}", "err")

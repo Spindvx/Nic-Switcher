@@ -286,6 +286,78 @@ def _dns_encode_name(name: str) -> bytes:
     return out + b"\x00"
 
 
+# ---------------------------------------------------------------------------
+# Active AV-protocol probes
+#
+# Several Pro AV protocols are proprietary and don't speak mDNS, but their
+# devices listen on well-known UDP ports for discovery broadcasts. Even when
+# we don't know the exact magic-byte format expected, just sending traffic
+# on those ports either:
+#   (a) tickles a response from the device (its discovery service replies),
+#   (b) prompts the device to broadcast its own announcement, or
+#   (c) at minimum confirms the port is OPEN — captured by the raw sniffer
+#       and then folded into the evidence scorer via PORT_KIND.
+#
+# Probed protocols & ports:
+#   UDP 2467  — Q-SYS QDP (QSC Q-SYS Core discovery, used by Q-SYS Designer)
+#   UDP 2468  — Q-SYS auxiliary
+#   UDP 2202  — Shure SSC (Shure ANI / MXA / IntelliMix discovery)
+#   UDP 41794 — Crestron CSDP (control-processor discovery)
+#   UDP 41795 — Crestron CSDP alternate
+#   UDP 4455  — Biamp Tesira / NetX
+#   UDP 4456  — Biamp Tesira alternate
+# ---------------------------------------------------------------------------
+
+# Each entry: (port, label, payload). Payload is intentionally minimal and
+# self-identifying — any AV gear logging unsolicited UDP will see our app
+# name rather than being confused by random bytes.
+_AV_PROBE_TARGETS: list[tuple[int, str, bytes]] = [
+    (2467,  "Q-SYS QDP",          b"NICSwitcher-AVScan"),
+    (2468,  "Q-SYS aux",          b"NICSwitcher-AVScan"),
+    (2202,  "Shure SSC",          b"NICSwitcher-AVScan"),
+    (41794, "Crestron CSDP",      b"NICSwitcher-AVScan"),
+    (41795, "Crestron CSDP alt",  b"NICSwitcher-AVScan"),
+    (4455,  "Biamp Tesira",       b"NICSwitcher-AVScan"),
+    (4456,  "Biamp Tesira alt",   b"NICSwitcher-AVScan"),
+]
+
+
+def av_probe(bind_ip: str) -> int:
+    """Broadcast a discovery probe to each AV-specific UDP port.
+
+    Returns the count of ports successfully probed. Does not wait for
+    replies — the live raw-socket sniffer captures any returning traffic
+    and folds it into the device table via the existing port-tracking +
+    evidence scorer paths. Run this from a background thread; sending
+    seven packets typically takes <50ms but the broadcast may briefly
+    block on a slow NIC.
+    """
+    if not bind_ip:
+        return 0
+    sent = 0
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        # Bind to our chosen NIC IP so the OS routes the broadcast out
+        # of the right adapter — important on multi-NIC AV laptops where
+        # the default route would otherwise pick the wrong interface.
+        s.bind((bind_ip, 0))
+        s.settimeout(0.5)
+        for port, _label, payload in _AV_PROBE_TARGETS:
+            try:
+                s.sendto(payload, ("255.255.255.255", port))
+                sent += 1
+            except OSError:
+                # Some devices/firewalls block specific ports — skip and
+                # continue with the rest. Best-effort.
+                continue
+        s.close()
+    except OSError:
+        pass
+    return sent
+
+
 def mdns_probe(bind_ip: str, questions: Optional[list[str]] = None) -> None:
     """Fire a single mDNS query for common service names. Does not wait for replies —
     the Sniffer picks replies up from the raw socket.
