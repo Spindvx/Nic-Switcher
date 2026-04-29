@@ -522,16 +522,29 @@ class Popup(QWidget):
         brand.setFixedHeight(38)
         brand.setToolTip("Spindux Enterprise")
 
+        # Two-line stack: version + "Esc to close" on top, author credit
+        # smaller below.
         hint = QLabel(f"v{__version__}  ·  Esc to close")
         hint.setObjectName("subtle")
         hint.setToolTip(f"{APP_NAME} v{__version__} — right-click tray icon for About / log folder / diagnostics")
+        author = QLabel("Josh C")
+        author.setStyleSheet(
+            f"color: {theme.TEXT_DIM}; font-size: 9px; letter-spacing: 0.6px;"
+        )
+        author.setAlignment(Qt.AlignmentFlag.AlignRight)
+        ver_col = QVBoxLayout()
+        ver_col.setSpacing(0)
+        ver_col.setContentsMargins(0, 0, 0, 0)
+        ver_col.addWidget(hint)
+        ver_col.addWidget(author)
+
         quit_btn = QPushButton("Quit")
         quit_btn.setObjectName("ghost")
         quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         quit_btn.clicked.connect(QApplication.instance().quit)
         footer.addWidget(brand)
         footer.addStretch(1)
-        footer.addWidget(hint)
+        footer.addLayout(ver_col)
         footer.addWidget(quit_btn)
         layout.addLayout(footer)
 

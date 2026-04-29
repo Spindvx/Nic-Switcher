@@ -333,13 +333,11 @@ class ScanDialog(GlassDialog):
         scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        # Controls
-        self.start_btn = QPushButton("Start passive sniff")
-        self.start_btn.setObjectName("accent")
-        self.start_btn.setFixedHeight(34)
-        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.start_btn.clicked.connect(self._toggle_sniff)
-
+        # Controls — Probe is the manual workhorse. Passive sniff still
+        # runs automatically as a brief baseline (started in __init__,
+        # stopped after ~8s) but it's no longer a manual toggle in the UI:
+        # the raw-socket path on Windows can be flaky on some adapters and
+        # was confusing users without adding much value over Probe.
         self.probe_btn = QPushButton("  Probe (mDNS + AV + ping sweep)")
         self.probe_btn.setIcon(icons.search(15, theme.TEXT_BODY))
         self.probe_btn.setIconSize(QSize(15, 15))
@@ -367,7 +365,6 @@ class ScanDialog(GlassDialog):
 
         btn_row1 = QHBoxLayout()
         btn_row1.setSpacing(8)
-        btn_row1.addWidget(self.start_btn, 1)
         btn_row1.addWidget(self.probe_btn, 1)
 
         btn_row2 = QHBoxLayout()
@@ -439,6 +436,12 @@ class ScanDialog(GlassDialog):
                 f"Dante discovery unavailable: {self._dante_err}", "warn"
             )
 
+        # Auto-baseline passive sniff — runs for 8 seconds in the
+        # background to populate the device table with whatever is
+        # actively chatting on the wire when the dialog opens. After
+        # that the user drives discovery via the Probe button.
+        QTimer.singleShot(150, self._start_baseline_sniff)
+
     # ---- lifecycle ----
     def closeEvent(self, e):
         self._closed = True
@@ -498,18 +501,26 @@ class ScanDialog(GlassDialog):
         self.status.setText(msg)
 
     # ---- actions ----
-    def _toggle_sniff(self):
+    def _start_baseline_sniff(self, duration_s: float = 8.0):
+        """Auto-start a short passive sniff for a baseline read of who's
+        actually chattering on the wire, then auto-stop. Removes the
+        manual 'Start passive sniff' button (the raw-socket path is
+        flaky on some adapters and was confusing users without adding
+        much value over Probe). Failure is silent — Probe still works."""
+        if self.sniffer.is_running() or not self.bind_ip:
+            return
+        ok, msg = self.sniffer.start(self.bind_ip)
+        self._update_sniff_chip()
+        if not ok:
+            return
+        self._set_status(f"Baseline sniff for {int(duration_s)}s…", "warn")
+        QTimer.singleShot(int(duration_s * 1000), self._stop_baseline_sniff)
+
+    def _stop_baseline_sniff(self):
+        if self._closed:
+            return
         if self.sniffer.is_running():
-            ok, msg = self.sniffer.stop()
-            self._set_status(msg, "ok" if ok else "err")
-        else:
-            ok, msg = self.sniffer.start(self.bind_ip)
-            if ok:
-                threading.Thread(
-                    target=discover.mdns_probe, args=(self.bind_ip,), daemon=True
-                ).start()
-            self._set_status(msg, "ok" if ok else "err")
-        self._update_button_states()
+            self.sniffer.stop()
         self._update_sniff_chip()
 
     def _probe(self):
@@ -558,8 +569,9 @@ class ScanDialog(GlassDialog):
 
     # ---- refresh ----
     def _update_button_states(self):
-        running = self.sniffer.is_running()
-        self.start_btn.setText("Stop sniff" if running else "Start passive sniff")
+        # No manual sniff toggle anymore — kept as a no-op so external
+        # call sites (and the periodic timer) don't need branches.
+        pass
 
     def _refresh(self):
         if self._closed:
