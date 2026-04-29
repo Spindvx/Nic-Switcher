@@ -35,6 +35,18 @@ class Tray(QSystemTrayIcon):
         menu.addAction(self.dhcp_action)
 
         menu.addSeparator()
+        # Run-at-Windows-startup toggle, surfaced directly in the tray
+        # right-click so users don't have to dig into About to flip it.
+        self.boot_action = QAction("Run at Windows startup", menu)
+        self.boot_action.setCheckable(True)
+        # Initial state read from the registry; aboutToShow re-syncs in
+        # case anything else (the About dialog, another user, gpedit) has
+        # touched the value while the app was running.
+        self.boot_action.setChecked(diagnostics.is_run_at_boot())
+        self.boot_action.toggled.connect(self._toggle_run_at_boot)
+        menu.addAction(self.boot_action)
+
+        menu.addSeparator()
         log_action = QAction("Open log folder", menu)
         log_action.triggered.connect(self._open_log_folder)
         menu.addAction(log_action)
@@ -100,6 +112,13 @@ class Tray(QSystemTrayIcon):
     def _sync_menu(self):
         running = dhcp_mod.is_running()
         self.dhcp_action.setText("Stop DHCP server" if running else "Start DHCP server")
+        # Re-read registry so the checkmark reflects ground truth even if
+        # something outside the app changed it.
+        actual = diagnostics.is_run_at_boot()
+        if self.boot_action.isChecked() != actual:
+            self.boot_action.blockSignals(True)
+            self.boot_action.setChecked(actual)
+            self.boot_action.blockSignals(False)
 
     def _open_log_folder(self):
         ok, msg = diagnostics.open_log_folder()
@@ -124,6 +143,21 @@ class Tray(QSystemTrayIcon):
         from .dialogs import AboutDialog
         dlg = AboutDialog(parent=self.popup if self.popup.isVisible() else None)
         dlg.exec()
+
+    def _toggle_run_at_boot(self, checked: bool):
+        ok, msg = diagnostics.set_run_at_boot(checked)
+        self.showMessage(
+            APP_NAME, msg,
+            QSystemTrayIcon.MessageIcon.Information
+            if ok else QSystemTrayIcon.MessageIcon.Warning,
+            3000,
+        )
+        if not ok:
+            # Toggle failed — revert checkbox to actual state so the menu
+            # never lies about whether we'll launch at boot.
+            self.boot_action.blockSignals(True)
+            self.boot_action.setChecked(diagnostics.is_run_at_boot())
+            self.boot_action.blockSignals(False)
 
     def _quit(self):
         try:

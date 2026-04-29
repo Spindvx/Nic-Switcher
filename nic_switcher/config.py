@@ -59,6 +59,10 @@ class AppConfig:
     presets: list[Preset] = field(default_factory=list)
     dhcp: DhcpConfig = field(default_factory=DhcpConfig)
     auto_start: bool = False
+    # On first run we register the app to launch at Windows login. Once
+    # we've done that (or the user turned it off), we never auto-touch
+    # the registry value again — they own that toggle from then on.
+    boot_setup_done: bool = False
 
     @classmethod
     def load(cls) -> "AppConfig":

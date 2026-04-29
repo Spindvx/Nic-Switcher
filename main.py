@@ -110,6 +110,22 @@ def main() -> int:
 
     config = AppConfig.load()
 
+    # First-run setup: register the app to auto-launch at Windows login.
+    # We do this exactly once (boot_setup_done flag). After this the user
+    # owns the toggle via the tray menu — we never auto-touch the
+    # registry again, even if they turn it off.
+    if not config.boot_setup_done:
+        try:
+            from nic_switcher import diagnostics
+            diagnostics.set_run_at_boot(True)  # no-op when running from source
+        except Exception:
+            pass
+        config.boot_setup_done = True
+        try:
+            config.save()
+        except Exception:
+            pass
+
     if not is_admin():
         QMessageBox.warning(
             None,
