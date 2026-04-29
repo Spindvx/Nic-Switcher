@@ -565,54 +565,64 @@ class ScanDialog(GlassDialog):
             return
         self._dirty = False
 
-        while self.list_layout.count() > 1:
-            item = self.list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        # Suspend paint while we tear down + rebuild the device list. Without
+        # this, Qt paints intermediate states where rows have been added to
+        # the layout but their child widgets haven't laid out yet — visible
+        # as a stripe pattern of empty card frames during active scanning.
+        self.list_host.setUpdatesEnabled(False)
+        try:
+            while self.list_layout.count() > 1:
+                item = self.list_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
 
-        devs = self.sniffer.device_list()
-        if not devs:
-            empty = QLabel(
-                "No devices yet. Start the sniff or hit Probe to flush the subnet."
-            )
-            empty.setObjectName("subtle")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setContentsMargins(0, 40, 0, 40)
-            self.list_layout.insertWidget(0, empty)
-            return
+            devs = self.sniffer.device_list()
+            if not devs:
+                empty = QLabel(
+                    "No devices yet. Start the sniff or hit Probe to flush the subnet."
+                )
+                empty.setObjectName("subtle")
+                empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                empty.setContentsMargins(0, 40, 0, 40)
+                self.list_layout.insertWidget(0, empty)
+                return
 
-        # Apply search filter first so AV/Other counts reflect the filter.
-        query = (self.search.text() or "").strip().lower()
-        if query:
-            def _match(d: Device) -> bool:
-                hay = " ".join([
-                    d.ip or "",
-                    (d.mac or "").lower(),
-                    (d.hostname or "").lower(),
-                    (d.vendor or "").lower(),
-                    (d.kind or ""),
-                ])
-                return query in hay
-            devs = [d for d in devs if _match(d)]
+            # Apply search filter first so AV/Other counts reflect the filter.
+            query = (self.search.text() or "").strip().lower()
+            if query:
+                def _match(d: Device) -> bool:
+                    hay = " ".join([
+                        d.ip or "",
+                        (d.mac or "").lower(),
+                        (d.hostname or "").lower(),
+                        (d.vendor or "").lower(),
+                        (d.kind or ""),
+                    ])
+                    return query in hay
+                devs = [d for d in devs if _match(d)]
 
-        # Split into AV + Other section headers — AV always renders first.
-        av_devs = [d for d in devs if is_av(d.kind) or d.is_gateway]
-        other_devs = [d for d in devs if not (is_av(d.kind) or d.is_gateway)]
+            # Split into AV + Other section headers — AV always renders first.
+            av_devs = [d for d in devs if is_av(d.kind) or d.is_gateway]
+            other_devs = [d for d in devs if not (is_av(d.kind) or d.is_gateway)]
 
-        if av_devs:
-            self._insert_section("PRO AV", f"{len(av_devs)} device(s)")
-            for dev in av_devs:
-                row = DeviceRow(dev, self.sniffer)
-                row.use_subnet.connect(self.apply_subnet)
-                row.open_web.connect(self._on_open_web)
-                self.list_layout.insertWidget(self.list_layout.count() - 1, row)
-        if other_devs:
-            self._insert_section("OTHER", f"{len(other_devs)} device(s)")
-            for dev in other_devs:
-                row = DeviceRow(dev, self.sniffer)
-                row.use_subnet.connect(self.apply_subnet)
-                row.open_web.connect(self._on_open_web)
-                self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+            if av_devs:
+                self._insert_section("PRO AV", f"{len(av_devs)} device(s)")
+                for dev in av_devs:
+                    row = DeviceRow(dev, self.sniffer)
+                    row.use_subnet.connect(self.apply_subnet)
+                    row.open_web.connect(self._on_open_web)
+                    self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+            if other_devs:
+                self._insert_section("OTHER", f"{len(other_devs)} device(s)")
+                for dev in other_devs:
+                    row = DeviceRow(dev, self.sniffer)
+                    row.use_subnet.connect(self.apply_subnet)
+                    row.open_web.connect(self._on_open_web)
+                    self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+        finally:
+            # Always re-enable paint, even if rebuild raised — without this
+            # the device list would freeze blank on any exception above.
+            self.list_host.setUpdatesEnabled(True)
 
     def _insert_section(self, title: str, count_text: str):
         row = QWidget()

@@ -785,8 +785,37 @@ def http_banner(ip: str, port: int = 80, timeout: float = 1.5) -> Optional[str]:
     return out[:160]
 
 
+def _is_real_gw(gw: str) -> bool:
+    """Reject 'On-link', '0.0.0.0', and broadcast addresses — `route print`
+    sometimes outputs these for direct/link-local routes and they are not
+    real next-hop gateways."""
+    if not gw or gw.lower() in ("on-link", "on link"):
+        return False
+    if gw == "0.0.0.0" or gw == "255.255.255.255":
+        return False
+    try:
+        # Must be a syntactically-valid IPv4 address (rejects "On-link",
+        # garbage etc.) and not the all-ones broadcast.
+        import ipaddress
+        ipaddress.IPv4Address(gw)
+    except ValueError:
+        return False
+    return True
+
+
 def default_gateway_for(bind_ip: str) -> Optional[str]:
-    """Best-effort: find gateway IP via `route print`."""
+    """Find the IPv4 default-route gateway for SPECIFICALLY this bound NIC.
+
+    Returns None if the bound interface has no default route of its own —
+    we deliberately do NOT fall back to "any default route" because on a
+    multi-NIC machine that returns the gateway of a different adapter
+    (e.g. a VPN like Tailscale or ZeroTier with metric-1 default route),
+    which surfaces as a confusing phantom gateway in the scan list when
+    the user is actually bound to a different NIC.
+
+    Also rejects 'On-link', 0.0.0.0, and broadcast — `route print` emits
+    these for direct/link-local routes that are not real next-hops.
+    """
     try:
         out = subprocess.run(
             ["route", "print", "-4", "0.0.0.0"],
@@ -795,16 +824,17 @@ def default_gateway_for(bind_ip: str) -> Optional[str]:
         ).stdout
         for line in out.splitlines():
             parts = line.split()
-            if len(parts) >= 4 and parts[0] == "0.0.0.0" and parts[1] == "0.0.0.0":
+            if (len(parts) >= 5
+                    and parts[0] == "0.0.0.0"
+                    and parts[1] == "0.0.0.0"):
                 gw = parts[2]
-                # prefer the route whose interface IP matches our bind_ip
-                if len(parts) >= 5 and parts[3] == bind_ip:
+                if not _is_real_gw(gw):
+                    continue
+                # Match the route whose Interface column equals our bound
+                # IP. No fallback: if THIS NIC doesn't have a default
+                # route, we don't have a gateway.
+                if parts[3] == bind_ip:
                     return gw
-        # fallback: first default route found
-        for line in out.splitlines():
-            parts = line.split()
-            if len(parts) >= 4 and parts[0] == "0.0.0.0" and parts[1] == "0.0.0.0":
-                return parts[2]
     except Exception:
         return None
     return None

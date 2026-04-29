@@ -35,6 +35,17 @@ class SniffStats:
 
 
 def _is_skip(ip: str) -> bool:
+    """Filter out IPs that should never appear as devices:
+      - 0.0.0.0/8     (this network — used as src in DHCP DISCOVER)
+      - 127.0.0.0/8   (loopback)
+      - 224.0.0.0/4   (multicast — 224.* and 239.* common ranges)
+      - 255.255.255.255 (limited broadcast — universal)
+
+    We deliberately do NOT filter all `.255` endings: on /23 or larger
+    networks the gateway can legitimately end in .255 and we don't want
+    to drop it. The phantom 'On-link' / cross-interface gateway issue is
+    fixed at the gateway-parse layer in discover.default_gateway_for.
+    """
     return (
         ip.startswith("0.")
         or ip.startswith("127.")
