@@ -65,18 +65,15 @@ class GlassDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setSizeGripEnabled(False)
 
-    # ── black-glass body — see-through when supported ─────────────────
-    def paintEvent(self, e):
-        # Same alpha (200) and tint (10,12,16) as the popup so dialogs
-        # and popup feel like one surface family. Mica/acrylic shows
-        # through if Windows allows it; otherwise the alpha-200 fill is
-        # dark enough to look clean as a near-solid surface.
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        path = QPainterPath()
-        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 16, 16)
-        p.fillPath(path, QColor(10, 12, 16, 200))
-        p.end()
+    # ── body painting ─────────────────────────────────────────────────
+    # Intentionally NO paintEvent: the dialog widget itself stays fully
+    # transparent (WA_TranslucentBackground) and the inner `#root`
+    # QWidget paints the actual rounded body via its QSS background.
+    # The 12px outer margin between the dialog edge and `#root` is then
+    # truly empty — the QGraphicsDropShadowEffect on `#root` renders
+    # into that margin without a competing paint underneath. Without
+    # this fix, painting the full dialog rect at alpha 200 created a
+    # visible grey ring around the (more opaque) inner card.
 
     def showEvent(self, e):
         super().showEvent(e)

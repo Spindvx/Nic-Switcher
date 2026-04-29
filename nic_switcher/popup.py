@@ -223,21 +223,12 @@ class Popup(QWidget):
             enable_blur(hwnd)
 
     def paintEvent(self, e):
-        # Tries to be see-through when Windows supports it. Two prerequisites
-        # outside our control:
-        #   1. Settings -> Personalization -> Colors -> "Show transparency
-        #      effects" must be ON.
-        #   2. The OS must accept the DwmSetWindowAttribute call (Mica
-        #      requires Win 11 22H2+; older Windows falls back to acrylic
-        #      blur via SetWindowCompositionAttribute).
-        # If either fails, the alpha-200 fill below is dark enough to look
-        # clean as a near-solid surface anyway.
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        path = QPainterPath()
-        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 16, 16)
-        p.fillPath(path, QColor(10, 12, 16, 200))
-        p.end()
+        # Body is painted by #root via QSS (translucent rgba on a rounded
+        # rect) — root has 0 outer margins so it spans the whole popup.
+        # Empty override ensures Qt doesn't fall back to a default fill
+        # on Windows under WA_TranslucentBackground. If you want a
+        # different opacity, edit BG_ROOT in theme.py.
+        pass
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:

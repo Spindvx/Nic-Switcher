@@ -20,11 +20,14 @@ The popup's paintEvent in popup.py also has a hard-coded RGBA — search for
 # Design tokens — black glass + pastel red
 # ---------------------------------------------------------------------------
 
-# -- Surfaces — solid black layered by tone (Mica wasn't reading through
-#    reliably on the user's box). Cards lift via subtle elevation, not glass. --
-BG_DEEP        = "#0a0c10"   # popup body — deepest black layer
-BG_ROOT        = "#0d1015"   # primary surface (#root container)
-BG_CARD        = "#15181f"   # cards / inputs — one tone lighter than root
+# -- Surfaces — translucent black layered by tone. The inner #root carries
+#    the body fill so the popup's outer margins stay truly empty (no
+#    grey-ring artifact around dialogs from competing paint layers).
+#    Mica shows through ~22% when Windows allows it; opaque-looking
+#    near-black otherwise.
+BG_DEEP        = "rgba(10, 12, 16, 215)"        # popup body — deepest layer
+BG_ROOT        = "rgba(13, 16, 21, 200)"        # #root container — translucent
+BG_CARD        = "#15181f"                       # cards / inputs — solid, one tone lighter
 BG_CARD_HOVER  = "#1c1f27"
 BG_CARD_ACTIVE = "#23262f"
 BG_CHIP        = "#1a1d24"
