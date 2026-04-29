@@ -20,39 +20,38 @@ The popup's paintEvent in popup.py also has a hard-coded RGBA — search for
 # Design tokens — black glass + pastel red
 # ---------------------------------------------------------------------------
 
-# -- Surfaces — translucent black layered by tone. The inner #root carries
-#    the body fill so the popup's outer margins stay truly empty (no
-#    grey-ring artifact around dialogs from competing paint layers).
-#    Mica shows through ~22% when Windows allows it; opaque-looking
-#    near-black otherwise.
-BG_DEEP        = "rgba(10, 12, 16, 215)"        # popup body — deepest layer
-BG_ROOT        = "rgba(13, 16, 21, 200)"        # #root container — translucent
-BG_CARD        = "#15181f"                       # cards / inputs — solid, one tone lighter
-BG_CARD_HOVER  = "#1c1f27"
-BG_CARD_ACTIVE = "#23262f"
-BG_CHIP        = "#1a1d24"
+# -- Surfaces — solid near-black. We no longer rely on Mica showing
+#    through (it's unreliable across Windows builds), and the inner
+#    #root paints the body in one pass so there are no grey-ring
+#    artifacts from competing paint layers.
+BG_DEEP        = "#06080c"                       # popup body — deepest near-black
+BG_ROOT        = "#080a10"                       # #root container — main surface
+BG_CARD        = "#13161d"                       # cards / inputs — one tone lighter
+BG_CARD_HOVER  = "#1a1d25"
+BG_CARD_ACTIVE = "#22252e"
+BG_CHIP        = "#181b22"
 
 # -- Borders — visible but soft, 1px hairlines for elevation cues --
 BORDER         = "rgba(255, 255, 255, 16)"
 BORDER_STRONG  = "rgba(255, 255, 255, 36)"
 BORDER_SUBTLE  = "rgba(255, 255, 255, 8)"
 
-# -- Accent (muted dusty pastel red) --
-# Toned down a step from the original #ff9aa2 — same hue family, lower
-# saturation + slightly darker so it reads as a soft accent rather than a
-# bright candy red on the deep black surface.
-ACCENT         = "#d8949a"   # main button / focus / link color
-ACCENT_HOVER   = "#e6a8ad"
-ACCENT_PRESS   = "#bd808a"
-ACCENT_DIM     = "#6e4448"
-ACCENT_INK     = "#170305"   # dark crimson text on the muted-red bg
+# -- Accent (deeper muted red) --
+# Pulled deeper from the previous dusty-rose toward a richer brick / wine
+# tone. Still in the soft-red family but with more saturation and
+# visual weight on the near-black surface.
+ACCENT         = "#bf5560"   # main button / focus / link color — deep muted red
+ACCENT_HOVER   = "#cc6671"
+ACCENT_PRESS   = "#a14550"
+ACCENT_DIM     = "#5a2c33"
+ACCENT_INK     = "#100204"   # very dark text on the deep-red bg
 
-# -- Selected / "on" indicator (lighter dusty pastel red glow) --
+# -- Selected / "on" indicator (a lighter sibling of ACCENT) --
 # Used for: pin button when pinned, active preset card. Brighter than
 # ACCENT so the "currently active" state pops without competing with
-# regular accent buttons, but still in the muted family.
-SELECT_GLOW       = "#e6b3b7"
-SELECT_GLOW_RGBA  = "rgba(230, 179, 183, 70)"  # soft halo for stylesheet
+# regular accent buttons.
+SELECT_GLOW       = "#d68690"
+SELECT_GLOW_RGBA  = "rgba(214, 134, 144, 75)"  # soft halo for stylesheet
 
 # -- Semantic --
 SUCCESS        = "#6de3a4"

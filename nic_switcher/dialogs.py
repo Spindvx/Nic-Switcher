@@ -256,14 +256,9 @@ class AboutDialog(GlassDialog):
         body.addLayout(close_row)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(root)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 110))
-        root.setGraphicsEffect(shadow)
 
     # ── handlers ──
     def _open_github(self):
@@ -417,14 +412,9 @@ class PresetDialog(GlassDialog):
         body.addWidget(btns)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(root)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 110))
-        root.setGraphicsEffect(shadow)
 
     def _mac_randomize(self):
         mac12 = mac_mod.random_locally_administered_mac()
@@ -681,14 +671,9 @@ class DhcpDialog(GlassDialog):
         body.addWidget(btns)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(root)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 110))
-        root.setGraphicsEffect(shadow)
 
         # Trigger initial autofill if fields are blank
         if not cfg.bind_ip or not cfg.range_start or not cfg.range_end:

@@ -398,14 +398,9 @@ class ScanDialog(GlassDialog):
         body.addWidget(self.status)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(root)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 110))
-        root.setGraphicsEffect(shadow)
 
         # refresh pump
         self._timer = QTimer(self)

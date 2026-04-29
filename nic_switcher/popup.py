@@ -535,14 +535,11 @@ class Popup(QWidget):
         footer.addWidget(quit_btn)
         layout.addLayout(footer)
 
-        # Light shadow — just enough to lift the popup off the desktop
-        # without the heavy "modal dialog" look the previous radius/alpha
-        # gave it.
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(18)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 110))
-        root.setGraphicsEffect(shadow)
+        # Drop shadow intentionally omitted — on translucent frameless
+        # windows the QGraphicsDropShadowEffect renders into the outer
+        # margin as a grey halo against the desktop, which reads as an
+        # unwanted "grey border". The rounded body sits cleanly on
+        # whatever's behind it without it.
 
     # ---- data refresh ----
     def refresh_all(self):
