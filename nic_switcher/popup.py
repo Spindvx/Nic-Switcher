@@ -223,15 +223,20 @@ class Popup(QWidget):
             enable_blur(hwnd)
 
     def paintEvent(self, e):
-        # Solid near-black body. Mica/acrylic was unreliable on the user's
-        # machine, so we paint a fully opaque dark surface. Slight cool
-        # offset from pure black (10,12,16) so it sits cleanly next to
-        # the lighter inner card surfaces.
+        # Tries to be see-through when Windows supports it. Two prerequisites
+        # outside our control:
+        #   1. Settings -> Personalization -> Colors -> "Show transparency
+        #      effects" must be ON.
+        #   2. The OS must accept the DwmSetWindowAttribute call (Mica
+        #      requires Win 11 22H2+; older Windows falls back to acrylic
+        #      blur via SetWindowCompositionAttribute).
+        # If either fails, the alpha-200 fill below is dark enough to look
+        # clean as a near-solid surface anyway.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 16, 16)
-        p.fillPath(path, QColor(10, 12, 16, 255))
+        p.fillPath(path, QColor(10, 12, 16, 200))
         p.end()
 
     def keyPressEvent(self, e):

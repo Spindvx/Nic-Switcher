@@ -319,6 +319,7 @@ _AV_PROBE_TARGETS: list[tuple[int, str, bytes]] = [
     (41795, "Crestron CSDP alt",  b"NICSwitcher-AVScan"),
     (4455,  "Biamp Tesira",       b"NICSwitcher-AVScan"),
     (4456,  "Biamp Tesira alt",   b"NICSwitcher-AVScan"),
+    (1319,  "AMX ICSP",           b"NICSwitcher-AVScan"),  # NetLinx Studio discovery
 ]
 
 
@@ -423,6 +424,12 @@ PORT_KIND: dict[tuple[str, int], str] = {
     ("udp", 8700): "dante",
     ("tcp", 4455): "biamp",
     ("tcp", 4456): "biamp",
+    ("udp", 4455): "biamp",
+    ("udp", 4456): "biamp",
+    ("udp", 1319): "amx",   # AMX NetLinx ICSP (NetLinx Studio discovery)
+    ("tcp", 1319): "amx",
+    ("udp", 2202): "shure",  # Shure SSC discovery
+    ("tcp", 2202): "shure",
     ("udp", 161): "switch",  # SNMP — usually managed gear
     ("udp", 162): "switch",  # SNMP trap
 }

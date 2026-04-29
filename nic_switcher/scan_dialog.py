@@ -347,8 +347,8 @@ class ScanDialog(GlassDialog):
         self.probe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.probe_btn.setToolTip(
             "Broadcast mDNS + AV-protocol discovery (Q-SYS QDP / Crestron "
-            "CSDP / Shure SSC / Tesira) + ping-sweep the local /24 to flush "
-            "silent devices"
+            "CSDP / Shure SSC / Tesira / AMX ICSP) + ping-sweep the local "
+            "/24 to flush silent devices"
         )
         self.probe_btn.clicked.connect(self._probe)
 

@@ -65,17 +65,30 @@ class GlassDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setSizeGripEnabled(False)
 
-    # ── solid-black body ───────────────────────────────────────────────
+    # ── black-glass body — see-through when supported ─────────────────
     def paintEvent(self, e):
-        # Solid near-black, same as the main popup so dialogs and popup
-        # read as one surface family. Adjust the QColor alpha here if you
-        # want translucency back later.
+        # Same alpha (200) and tint (10,12,16) as the popup so dialogs
+        # and popup feel like one surface family. Mica/acrylic shows
+        # through if Windows allows it; otherwise the alpha-200 fill is
+        # dark enough to look clean as a near-solid surface.
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1).toRectF(), 16, 16)
-        p.fillPath(path, QColor(10, 12, 16, 255))
+        p.fillPath(path, QColor(10, 12, 16, 200))
         p.end()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # Try Mica (Win 11 22H2+) first, fall back to acrylic blur
+        # (older Win 10 / 11). Both are best-effort — if Windows
+        # rejects the call, we still render fine via paintEvent.
+        try:
+            hwnd = int(self.winId())
+            if not try_enable_mica(hwnd):
+                enable_blur(hwnd)
+        except Exception:
+            pass
 
     # ── drag-by-title-strip ───────────────────────────────────────────
     def mousePressEvent(self, e):
