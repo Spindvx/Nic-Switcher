@@ -571,10 +571,20 @@ class ScanDialog(GlassDialog):
         # as a stripe pattern of empty card frames during active scanning.
         self.list_host.setUpdatesEnabled(False)
         try:
+            # takeAt + deleteLater alone leaves widgets parented to
+            # list_host until the event loop runs, and on the next refresh
+            # Qt sometimes re-attaches them to the layout — visible as a
+            # slowly-growing extra row in the scroll list. Explicitly
+            # setParent(None) breaks the parent link so deleteLater is the
+            # last reference and the widget genuinely goes away.
             while self.list_layout.count() > 1:
                 item = self.list_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
+                if item is None:
+                    break
+                w = item.widget()
+                if w is not None:
+                    w.setParent(None)
+                    w.deleteLater()
 
             devs = self.sniffer.device_list()
             if not devs:
