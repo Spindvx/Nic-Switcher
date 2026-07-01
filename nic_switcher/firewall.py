@@ -18,6 +18,7 @@ CREATE_NO_WINDOW = 0x08000000
 RULE_DHCP_IN = "NIC Switcher — DHCP inbound (UDP 67)"
 RULE_DHCP_OUT = "NIC Switcher — DHCP outbound (UDP 68)"
 RULE_DHCP_PROG = "NIC Switcher — DHCP server program"
+RULE_NAMES = [RULE_DHCP_IN, RULE_DHCP_OUT, RULE_DHCP_PROG]
 
 
 def _run(args: list[str], timeout: int = 10) -> tuple[int, str]:
@@ -157,17 +158,19 @@ def ensure_dhcp_rules(exe_path: Optional[str] = None) -> tuple[bool, str]:
 
 
 def remove_dhcp_rules() -> tuple[bool, str]:
+    errors: list[str] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-        futs = [
-            ex.submit(_delete, RULE_DHCP_IN),
-            ex.submit(_delete, RULE_DHCP_OUT),
-            ex.submit(_delete, RULE_DHCP_PROG),
-        ]
-        for f in futs:
+        futs = {ex.submit(_delete, name): name for name in RULE_NAMES}
+        for f in concurrent.futures.as_completed(futs):
+            name = futs[f]
             try:
-                f.result(timeout=8)
+                rc, _ = f.result(timeout=8)
+                if rc != 0:
+                    errors.append(name)
             except Exception:
-                pass
+                errors.append(name)
+    if errors:
+        return False, f"Failed to remove: {', '.join(errors)}"
     return True, "Firewall rules removed."
 
 

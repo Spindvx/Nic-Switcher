@@ -115,16 +115,18 @@ def main() -> int:
     # owns the toggle via the tray menu — we never auto-touch the
     # registry again, even if they turn it off.
     if not config.boot_setup_done:
+        boot_ok = False
         try:
             from nic_switcher import diagnostics
-            diagnostics.set_run_at_boot(True)  # no-op when running from source
+            boot_ok, _ = diagnostics.set_run_at_boot(True)
         except Exception:
             pass
-        config.boot_setup_done = True
-        try:
-            config.save()
-        except Exception:
-            pass
+        if boot_ok:
+            config.boot_setup_done = True
+            try:
+                config.save()
+            except Exception:
+                pass
 
     if not is_admin():
         QMessageBox.warning(

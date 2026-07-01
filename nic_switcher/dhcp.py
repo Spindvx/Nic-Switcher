@@ -38,6 +38,9 @@ def bundled_dhcpsrv_path() -> Optional[str]:
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         candidates.append(Path(meipass) / "dhcpsrv" / "dhcpsrv.exe")
+    # Installed (onedir) layout — dhcpsrv\ next to the .exe
+    exe_dir = Path(sys.executable).resolve().parent
+    candidates.append(exe_dir / "dhcpsrv" / "dhcpsrv.exe")
     # Running from source
     here = Path(__file__).resolve().parent.parent
     candidates.append(here / "vendor" / "dhcpsrv" / "dhcpsrv.exe")
@@ -84,19 +87,28 @@ def _stderr_path(cfg: DhcpConfig) -> Path:
     return _runtime_dir() / "dhcpsrv-stderr.log"
 
 
-def _kill_orphans() -> int:
-    """Kill any lingering dhcpsrv.exe from a previous crashed session.
+def _kill_orphans(my_ini: str = "") -> int:
+    """Kill lingering dhcpsrv.exe from a previous crashed session.
+    If my_ini is given, only kill instances whose command line references
+    that ini path (avoids destroying independent DHCP servers). If my_ini
+    is empty, fall back to killing all dhcpsrv.exe (legacy behaviour).
     Returns number of processes killed."""
     killed = 0
-    for proc in psutil.process_iter(["name", "pid"]):
+    fields = ["name", "pid"] + (["cmdline"] if my_ini else [])
+    for proc in psutil.process_iter(fields):
         try:
-            if (proc.info.get("name") or "").lower() == "dhcpsrv.exe":
-                proc.terminate()
-                try:
-                    proc.wait(timeout=2)
-                except psutil.TimeoutExpired:
-                    proc.kill()
-                killed += 1
+            if (proc.info.get("name") or "").lower() != "dhcpsrv.exe":
+                continue
+            if my_ini:
+                cmdline = " ".join(proc.info.get("cmdline") or [])
+                if my_ini not in cmdline:
+                    continue
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except psutil.TimeoutExpired:
+                proc.kill()
+            killed += 1
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
     return killed
@@ -159,7 +171,8 @@ def start(cfg: DhcpConfig) -> tuple[bool, str]:
 
     # Recover from any orphan dhcpsrv from a previous crash — otherwise port 67
     # is held and the new process exits immediately.
-    killed = _kill_orphans()
+    ini_path_str = str(_ini_path(cfg))
+    killed = _kill_orphans(my_ini=ini_path_str)
 
     try:
         ini = _write_ini(cfg, end_octet)
@@ -188,6 +201,14 @@ def start(cfg: DhcpConfig) -> tuple[bool, str]:
                 stderr=stderr_fh,
                 stdin=subprocess.DEVNULL,
             )
+        # Close the parent's copy of the stderr handle — the child has its
+        # own dup. Keeping the parent handle open prevents log rotation and
+        # leaks a file descriptor on every successful DHCP start.
+        if stderr_fh is not subprocess.DEVNULL:
+            try:
+                stderr_fh.close()
+            except Exception:
+                pass
         # Give it a moment to fail fast (bad bind, port taken, etc.)
         try:
             rc = _proc.wait(timeout=1.2)
@@ -199,11 +220,6 @@ def start(cfg: DhcpConfig) -> tuple[bool, str]:
             reason = _read_exit_reason(cfg, stderr_path)
             with _lock:
                 _proc = None
-            try:
-                if stderr_fh not in (subprocess.DEVNULL,):
-                    stderr_fh.close()
-            except Exception:
-                pass
             return False, (
                 f"dhcpsrv.exe exited immediately (code {rc}). {reason}"
             )
@@ -215,11 +231,11 @@ def start(cfg: DhcpConfig) -> tuple[bool, str]:
     except Exception as e:
         with _lock:
             _proc = None
-        try:
-            if stderr_fh not in (subprocess.DEVNULL,):
+        if stderr_fh is not subprocess.DEVNULL:
+            try:
                 stderr_fh.close()
-        except Exception:
-            pass
+            except Exception:
+                pass
         return False, f"Failed to start: {e}"
 
 

@@ -86,6 +86,9 @@ def _apply_mac_if_any(nic_name: str, mac_field: str) -> tuple[bool, str]:
 
 def apply_preset(nic_name: str, preset: Preset) -> tuple[bool, str]:
     """Apply a preset to the given NIC. Empty IP => switch to DHCP."""
+    from .validate import valid_nic_name
+    if not valid_nic_name(nic_name):
+        return False, f"Invalid NIC name: {nic_name!r}"
     # Validate up front so a bad MAC never kicks off a partial apply.
     ok, err = validate_preset(
         preset.ip, preset.prefix, preset.gateway, preset.dns1, preset.dns2,
@@ -119,22 +122,29 @@ def apply_preset(nic_name: str, preset: Preset) -> tuple[bool, str]:
     if rc != 0:
         return False, (err or out).strip() or "netsh failed"
 
+    dns_errors: list[str] = []
     if preset.dns1:
-        _run([
+        rc, _, err = _run([
             "netsh", "interface", "ip", "set", "dnsservers",
             f"name={nic_name}", "static", preset.dns1, "primary",
         ])
+        if rc != 0:
+            dns_errors.append(f"DNS1: {(err or '').strip()}")
         if preset.dns2:
-            _run([
+            rc, _, err = _run([
                 "netsh", "interface", "ip", "add", "dnsservers",
                 f"name={nic_name}", preset.dns2, "index=2",
             ])
+            if rc != 0:
+                dns_errors.append(f"DNS2: {(err or '').strip()}")
     else:
         _run([
             "netsh", "interface", "ip", "set", "dnsservers",
             f"name={nic_name}", "dhcp",
         ])
     suffix = " + MAC" if preset.mac else ""
+    if dns_errors:
+        return True, f"Applied {preset.name} ({preset.ip}/{preset.prefix}){suffix} — DNS warnings: {'; '.join(dns_errors)}"
     return True, f"Applied {preset.name} ({preset.ip}/{preset.prefix}){suffix}"
 
 

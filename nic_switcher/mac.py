@@ -336,6 +336,10 @@ def hardware_mac(nic_name: str) -> Optional[str]:
     """
     if nic_name in _HARDWARE_MAC_CACHE:
         return _HARDWARE_MAC_CACHE[nic_name]
+    from .validate import valid_nic_name
+    if not valid_nic_name(nic_name):
+        _HARDWARE_MAC_CACHE[nic_name] = None
+        return None
     try:
         proc = subprocess.run(
             [

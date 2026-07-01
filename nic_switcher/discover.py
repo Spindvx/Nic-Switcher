@@ -215,7 +215,7 @@ def read_arp_cache() -> list[tuple[str, str]]:
             continue
         ip = socket.inet_ntoa(struct.pack("<I", r.dwAddr))
         mac = ":".join(f"{b:02X}" for b in r.bPhysAddr[: r.dwPhysAddrLen])
-        if ip.startswith("224.") or ip == "255.255.255.255" or ip.endswith(".255"):
+        if ip.startswith("224.") or ip == "255.255.255.255":
             continue
         out.append((ip, mac))
     return out

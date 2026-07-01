@@ -2,7 +2,16 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 from typing import Optional
+
+
+_VALID_NIC_NAME = re.compile(r"^[\w ._\-()#]{1,128}$", re.UNICODE)
+
+
+def valid_nic_name(name: str) -> bool:
+    """Reject NIC names that could break netsh/PowerShell argument parsing."""
+    return bool(name and _VALID_NIC_NAME.match(name))
 
 
 def is_valid_ipv4(s: str) -> bool:

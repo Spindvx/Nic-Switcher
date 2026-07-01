@@ -94,7 +94,8 @@ class AppConfig:
             # instead of silently losing them on next save.
             try:
                 backup = CONFIG_PATH.with_suffix(".json.corrupt")
-                CONFIG_PATH.rename(backup)
+                backup.unlink(missing_ok=True)
+                os.replace(CONFIG_PATH, backup)
             except Exception:
                 pass
             return cls(presets=_default_presets())
