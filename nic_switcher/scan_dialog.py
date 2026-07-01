@@ -1,0 +1,694 @@
+"""Network scan dialog — live device discovery view with premium styling."""
+from __future__ import annotations
+
+import threading
+import webbrowser
+from typing import Optional
+
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QCheckBox, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
+    QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout,
+    QWidget,
+)
+from PyQt6.QtGui import QGuiApplication
+
+from . import dante, discover, icons, theme
+from .dialogs import GlassDialog
+from .discover import Device, is_av, kind_label
+from .sniffer import Sniffer
+from .theme import KIND_COLORS, STYLE
+
+
+# ---------------------------------------------------------------------------
+# Pill badge for device kind
+# ---------------------------------------------------------------------------
+
+def _kind_pill(kind: Optional[str], confidence: int = 100) -> QLabel:
+    """Kind badge. When confidence < 70 we append a '?' to signal that the
+    classification is based on weak/partial evidence (single port, OUI
+    only, etc.) rather than a confirmed mDNS/banner hit."""
+    text = kind_label(kind).upper()
+    if kind and 0 < confidence < 70:
+        text = f"{text}?"
+    color = KIND_COLORS.get(kind or "host", theme.TEXT_MUTED)
+    lbl = QLabel(text)
+    lbl.setObjectName("pill")
+    if confidence and confidence < 70:
+        lbl.setToolTip(
+            f"Tentative match — {confidence}% confidence. Try the Probe "
+            "button or open the device's web GUI to confirm."
+        )
+    # Tinted background using kind color — pale translucent
+    bg_rgba = _hex_to_rgba(color, alpha=36)
+    border_rgba = _hex_to_rgba(color, alpha=120)
+    lbl.setStyleSheet(
+        f"background: {bg_rgba}; color: {color}; "
+        f"border: 1px solid {border_rgba}; border-radius: 10px; "
+        f"padding: 2px 9px; font-size: 10px; font-weight: 700; letter-spacing: 0.8px;"
+    )
+    return lbl
+
+
+def _hex_to_rgba(hex_color: str, alpha: int = 255) -> str:
+    """#rrggbb → 'rgba(r, g, b, a)'."""
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return hex_color
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+# ---------------------------------------------------------------------------
+# Device row
+# ---------------------------------------------------------------------------
+
+class DeviceRow(QFrame):
+    use_subnet = pyqtSignal(str, int)
+    open_web = pyqtSignal(str)
+
+    def __init__(self, dev: Device, sniffer: Sniffer, parent=None):
+        super().__init__(parent)
+        self.dev = dev
+        self.sniffer = sniffer
+        self.setObjectName("deviceCard")
+        # Right-click → quick copy / use-subnet menu.
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
+
+        color = KIND_COLORS.get(dev.kind or "host", theme.TEXT_MUTED)
+
+        # LED
+        led = QLabel()
+        led.setPixmap(icons.dot(12, color).pixmap(12, 12))
+        led.setFixedSize(12, 12)
+
+        # Title line: hostname or IP, bold
+        name = dev.hostname or dev.ip
+        if dev.is_gateway and "gateway" not in name.lower():
+            name += "  · gateway"
+        title = QLabel(name)
+        title.setStyleSheet(
+            f"font-weight: 600; font-size: 13px; color: {theme.TEXT_PRIMARY};"
+        )
+
+        # Mono IP + MAC line
+        mono_bits = [dev.ip]
+        if dev.mac:
+            mono_bits.append(dev.mac.lower())
+        mono = QLabel("   ·   ".join(mono_bits))
+        mono.setObjectName("mono")
+
+        # Vendor / meta line
+        meta_bits = []
+        if dev.vendor:
+            meta_bits.append(dev.vendor)
+        if dev.ports:
+            top = sorted(dev.ports, key=lambda p: (p[0], p[1]))[:4]
+            meta_bits.append(", ".join(f"{p}/{n}" for p, n in top))
+        if dev.mdns_services:
+            svcs = ", ".join(sorted(dev.mdns_services))
+            if len(svcs) > 46:
+                svcs = svcs[:44] + "…"
+            meta_bits.append(svcs)
+        if dev.packets:
+            meta_bits.append(f"{dev.packets} pkt")
+        meta_text = "  ·  ".join(meta_bits)
+        meta = QLabel(meta_text) if meta_text else None
+        if meta is not None:
+            meta.setObjectName("subtle")
+            meta.setWordWrap(True)
+
+        # HTTP banner — single line below meta if we got one. Highest-signal
+        # AV-gear evidence; show prominently.
+        banner_label: Optional[QLabel] = None
+        if dev.http_banner:
+            banner_label = QLabel(dev.http_banner)
+            banner_label.setObjectName("subtle")
+            banner_label.setWordWrap(True)
+            banner_label.setStyleSheet(
+                f"color: {theme.TEXT_BODY}; font-size: 11px; font-style: italic;"
+            )
+
+        # kind pill (with confidence indicator if not 100)
+        pill = _kind_pill(dev.kind, dev.confidence)
+
+        # Left column: LED
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 5, 0, 0)
+        left_col.setSpacing(0)
+        left_col.addWidget(led)
+        left_col.addStretch(1)
+
+        # Middle column: title, mono, meta
+        mid_col = QVBoxLayout()
+        mid_col.setContentsMargins(0, 0, 0, 0)
+        mid_col.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        title_row.addWidget(pill)
+        mid_col.addLayout(title_row)
+        mid_col.addWidget(mono)
+        if meta is not None:
+            mid_col.addWidget(meta)
+        if banner_label is not None:
+            mid_col.addWidget(banner_label)
+
+        # Open button — launches the device's web GUI in the default browser.
+        # AV gear is overwhelmingly HTTP (self-signed HTTPS is rare and adds
+        # cert prompts), so we deliberately use http://. To prefill the
+        # manual form with a free IP from this subnet, right-click the row
+        # and pick "Use this subnet".
+        use_btn = QPushButton("Open")
+        use_btn.setObjectName("ghost")
+        use_btn.setToolTip(f"Open http://{dev.ip} in your default browser")
+        use_btn.setFixedHeight(28)
+        use_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        use_btn.clicked.connect(self._open_web)
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(0)
+        right_col.addStretch(1)
+        right_col.addWidget(use_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        right_col.addStretch(1)
+
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 10, 10, 10)
+        root.setSpacing(10)
+        root.addLayout(left_col)
+        root.addLayout(mid_col, 1)
+        root.addLayout(right_col)
+
+    def _emit_subnet(self):
+        parts = self.dev.ip.split(".")
+        subnet = ".".join(parts[:3])
+        seen: set[int] = set()
+        for ip in self.sniffer.devices:
+            p = ip.split(".")
+            if len(p) == 4 and ".".join(p[:3]) == subnet:
+                try:
+                    seen.add(int(p[3]))
+                except ValueError:
+                    pass
+        chosen = None
+        for cand in (250, 240, 230, 220, 210, 200, 150):
+            if cand not in seen:
+                chosen = cand
+                break
+        if chosen is None:
+            for cand in range(2, 255):
+                if cand not in seen:
+                    chosen = cand
+                    break
+        self.use_subnet.emit(f"{subnet}.{chosen or 250}", 24)
+
+    def _open_web(self):
+        if not self.dev.ip:
+            return
+        url = f"http://{self.dev.ip}"
+        try:
+            webbrowser.open(url, new=2, autoraise=True)
+        except Exception:
+            pass
+        self.open_web.emit(url)
+
+    def _on_context_menu(self, pos):
+        menu = QMenu(self)
+        clip = QGuiApplication.clipboard()
+
+        def copy(text: str):
+            return lambda: clip.setText(text)
+
+        if self.dev.ip:
+            menu.addAction(f"Open  ·  http://{self.dev.ip}", self._open_web)
+            menu.addSeparator()
+            menu.addAction(f"Copy IP  ·  {self.dev.ip}", copy(self.dev.ip))
+        if self.dev.mac:
+            menu.addAction(f"Copy MAC  ·  {self.dev.mac}", copy(self.dev.mac))
+        if self.dev.hostname:
+            menu.addAction(f"Copy hostname  ·  {self.dev.hostname}",
+                           copy(self.dev.hostname))
+        if self.dev.vendor:
+            menu.addAction(f"Copy vendor  ·  {self.dev.vendor[:32]}",
+                           copy(self.dev.vendor))
+        menu.addSeparator()
+        menu.addAction("Use this subnet (prefill manual)", self._emit_subnet)
+        menu.exec(self.mapToGlobal(pos))
+
+
+# ---------------------------------------------------------------------------
+# Scan dialog
+# ---------------------------------------------------------------------------
+
+class ScanDialog(GlassDialog):
+    apply_subnet = pyqtSignal(str, int)
+    probe_status = pyqtSignal(str, str)
+
+    def __init__(self, sniffer: Sniffer, bind_ip: str, parent=None):
+        super().__init__(title="Network Scan", parent=parent)
+        self.sniffer = sniffer
+        self.bind_ip = bind_ip
+        self._closed = False
+        self.probe_status.connect(self._on_probe_status)
+        # Dante browser runs for the lifetime of this dialog.
+        self._dante = dante.DanteBrowser(on_update=self._on_dante_update)
+        self._dante_available, self._dante_err = self._dante.available()
+
+        self.resize(640, 720)
+
+        # Header
+        title = QLabel("Network Scan")
+        title.setObjectName("title")
+        subtitle = QLabel(f"Passive sniff + active discovery on {bind_ip or 'this adapter'}")
+        subtitle.setObjectName("subtitle")
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(1)
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
+
+        self.sniff_chip = QLabel("IDLE")
+        self.sniff_chip.setObjectName("pill")
+
+        header = QHBoxLayout()
+        header.addLayout(title_col)
+        header.addStretch(1)
+        header.addWidget(self.sniff_chip)
+
+        # Stat strip
+        self.stat_pkt = QLabel("0 packets")
+        self.stat_pkt.setObjectName("subtle")
+        self.stat_dev = QLabel("0 devices")
+        self.stat_dev.setObjectName("subtle")
+        self.stat_sub = QLabel("no subnets yet")
+        self.stat_sub.setObjectName("subtle")
+
+        stat_row = QHBoxLayout()
+        stat_row.setSpacing(14)
+        stat_row.addWidget(self.stat_pkt)
+        stat_row.addWidget(self.stat_dev)
+        stat_row.addWidget(self.stat_sub, 1)
+
+        # Search filter — instant text match against IP, MAC, hostname, vendor.
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search by IP, MAC, hostname, or vendor…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._mark_dirty)
+
+        # Auto-probe — periodic mDNS + ping sweep so the list stays fresh
+        # without the user mashing the Probe button.
+        self.auto_probe = QCheckBox("Auto-probe every 8s")
+        self.auto_probe.setToolTip(
+            "Re-fire mDNS broadcast + ping sweep every 8 seconds while open"
+        )
+        self.auto_probe.setChecked(False)
+        self._auto_probe_timer = QTimer(self)
+        self._auto_probe_timer.setInterval(8000)
+        self._auto_probe_timer.timeout.connect(self._auto_probe_tick)
+        self.auto_probe.toggled.connect(
+            lambda on: (self._auto_probe_timer.start() if on
+                        else self._auto_probe_timer.stop())
+        )
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        filter_row.addWidget(self.search, 1)
+        filter_row.addWidget(self.auto_probe)
+
+        # Device list
+        self.list_host = QWidget()
+        self.list_layout = QVBoxLayout(self.list_host)
+        self.list_layout.setContentsMargins(0, 0, 6, 0)
+        self.list_layout.setSpacing(6)
+        self.list_layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(self.list_host)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        # Controls — Probe is the manual workhorse. Passive sniff still
+        # runs automatically as a brief baseline (started in __init__,
+        # stopped after ~8s) but it's no longer a manual toggle in the UI:
+        # the raw-socket path on Windows can be flaky on some adapters and
+        # was confusing users without adding much value over Probe.
+        self.probe_btn = QPushButton("  Probe (mDNS + AV + ping sweep)")
+        self.probe_btn.setIcon(icons.search(15, theme.TEXT_BODY))
+        self.probe_btn.setIconSize(QSize(15, 15))
+        self.probe_btn.setFixedHeight(34)
+        self.probe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.probe_btn.setToolTip(
+            "Broadcast mDNS + AV-protocol discovery (Q-SYS QDP / Crestron "
+            "CSDP / Shure SSC / Tesira / AMX ICSP) + ping-sweep the local "
+            "/24 to flush silent devices"
+        )
+        self.probe_btn.clicked.connect(self._probe)
+
+        self.suggest_btn = QPushButton("Suggest IP")
+        self.suggest_btn.setObjectName("ghost")
+        self.suggest_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.suggest_btn.setToolTip(
+            "Pick a free IP in the busiest subnet and prefill the manual form"
+        )
+        self.suggest_btn.clicked.connect(self._suggest)
+
+        close_btn = QPushButton("Close")
+        close_btn.setFixedHeight(32)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.accept)
+
+        btn_row1 = QHBoxLayout()
+        btn_row1.setSpacing(8)
+        btn_row1.addWidget(self.probe_btn, 1)
+
+        btn_row2 = QHBoxLayout()
+        btn_row2.setSpacing(8)
+        btn_row2.addWidget(self.suggest_btn)
+        btn_row2.addStretch(1)
+        btn_row2.addWidget(close_btn)
+
+        self.status = QLabel("")
+        self.status.setObjectName("subtle")
+        self.status.setWordWrap(True)
+
+        # Root container (so we can add shadow + padding)
+        root = QWidget(self)
+        root.setObjectName("root")
+
+        body = QVBoxLayout(root)
+        body.setContentsMargins(20, 12, 20, 16)
+        body.setSpacing(10)
+        body.addWidget(self.build_title_strip())   # custom close + draggable
+        body.addLayout(header)
+        body.addLayout(stat_row)
+        body.addLayout(filter_row)
+        body.addSpacing(2)
+        body.addWidget(scroll, 1)
+        body.addLayout(btn_row1)
+        body.addLayout(btn_row2)
+        body.addWidget(self.status)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(root)
+
+
+        # refresh pump — 1500ms is the "steady" cadence; rebuild logic
+        # below also short-circuits when the IP set hasn't changed, so
+        # the list only flickers when devices actually come and go.
+        self._timer = QTimer(self)
+        self._timer.setInterval(1500)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start()
+        self._last_render_signature: tuple = ()
+
+        self.sniffer.on_update = self._mark_dirty
+        self._dirty = True
+        self._update_sniff_chip()
+        self._refresh()
+
+        # Pre-populate the gateway so it shows up in the scan list even
+        # before the user starts passive sniffing. Without this, the
+        # gateway only appeared once `Sniffer.start()` ran.
+        if self.bind_ip:
+            try:
+                gw = self.sniffer.ensure_gateway(self.bind_ip)
+                if gw:
+                    self._dirty = True
+            except Exception:
+                pass
+
+        # Kick off Dante mDNS browsing in the background.
+        if self._dante_available:
+            started, msg = self._dante.start()
+            if started:
+                self._set_status(msg, "ok")
+            else:
+                self._set_status(f"Dante: {msg}", "warn")
+        else:
+            self._set_status(
+                f"Dante discovery unavailable: {self._dante_err}", "warn"
+            )
+
+        # Auto-baseline passive sniff — runs for 8 seconds in the
+        # background to populate the device table with whatever is
+        # actively chatting on the wire when the dialog opens. After
+        # that the user drives discovery via the Probe button.
+        QTimer.singleShot(150, self._start_baseline_sniff)
+
+    # ---- lifecycle ----
+    def closeEvent(self, e):
+        self._closed = True
+        self.sniffer.on_update = None
+        self._timer.stop()
+        try:
+            self._auto_probe_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._dante.stop()
+        except Exception:
+            pass
+        super().closeEvent(e)
+
+    def _on_open_web(self, url: str):
+        self._set_status(f"Opening {url} in browser…", "ok")
+
+    def _auto_probe_tick(self):
+        """Periodic re-probe so the list freshens itself while open. Runs the
+        worker on a thread so the 96-way ping sweep doesn't block the UI."""
+        if self._closed or not self.bind_ip:
+            return
+        threading.Thread(target=self._probe_worker, daemon=True).start()
+
+    def _on_dante_update(self, dante_devs: dict):
+        """Zeroconf callback — fires on the zeroconf thread. Merge into the
+        sniffer's device table; the Qt timer picks up the new data on the UI
+        thread at the next refresh tick."""
+        try:
+            self.sniffer.merge_dante(dante_devs)
+        except Exception:
+            pass
+
+    def _mark_dirty(self):
+        self._dirty = True
+
+    # ---- chip helpers ----
+    def _update_sniff_chip(self):
+        running = self.sniffer.is_running()
+        if running:
+            self.sniff_chip.setText("LIVE")
+            self.sniff_chip.setStyleSheet(
+                f"background: rgba(109, 227, 164, 40); color: {theme.SUCCESS}; "
+                f"border: 1px solid rgba(109, 227, 164, 120); border-radius: 10px; "
+                f"padding: 2px 9px; font-size: 10px; font-weight: 700; letter-spacing: 0.8px;"
+            )
+        else:
+            self.sniff_chip.setText("IDLE")
+            self.sniff_chip.setStyleSheet("")  # inherit #pill default
+
+    def _set_status(self, msg: str, kind: str = "ok"):
+        colors = {"ok": theme.SUCCESS, "err": theme.DANGER, "warn": theme.WARNING}
+        self.status.setStyleSheet(
+            f"color: {colors.get(kind, theme.TEXT_MUTED)}; font-size: 11px;"
+        )
+        self.status.setText(msg)
+
+    # ---- actions ----
+    def _start_baseline_sniff(self, duration_s: float = 8.0):
+        """Auto-start a short passive sniff for a baseline read of who's
+        actually chattering on the wire, then auto-stop. Removes the
+        manual 'Start passive sniff' button (the raw-socket path is
+        flaky on some adapters and was confusing users without adding
+        much value over Probe). Failure is silent — Probe still works."""
+        if self.sniffer.is_running() or not self.bind_ip:
+            return
+        ok, msg = self.sniffer.start(self.bind_ip)
+        self._update_sniff_chip()
+        if not ok:
+            return
+        self._set_status(f"Baseline sniff for {int(duration_s)}s…", "warn")
+        QTimer.singleShot(int(duration_s * 1000), self._stop_baseline_sniff)
+
+    def _stop_baseline_sniff(self):
+        if self._closed:
+            return
+        if self.sniffer.is_running():
+            self.sniffer.stop()
+        self._update_sniff_chip()
+
+    def _probe(self):
+        if not self.bind_ip:
+            self._set_status("Selected NIC has no IPv4 — can't probe.", "err")
+            return
+        self._set_status("Probing — mDNS broadcast + ping sweep running…", "warn")
+        threading.Thread(target=self._probe_worker, daemon=True).start()
+
+    def _probe_worker(self):
+        try:
+            # Three-way probe: mDNS for self-announcing services, AV-protocol
+            # broadcasts for proprietary discovery (Q-SYS QDP, Crestron CSDP,
+            # Shure SSC, Biamp Tesira), and a /24 ping sweep to flush ARP.
+            discover.mdns_probe(self.bind_ip)
+            av_sent = discover.av_probe(self.bind_ip)
+            parts = self.bind_ip.split(".")
+            if len(parts) == 4:
+                prefix = ".".join(parts[:3])
+                discover.ping_sweep(prefix, timeout_ms=300, workers=96)
+            added = self.sniffer.merge_arp()
+            # Re-flag the gateway after the merge — ensure_gateway pins
+            # is_gateway=True even if merge_arp's classification stomped it.
+            self.sniffer.ensure_gateway(self.bind_ip)
+            self.probe_status.emit(
+                f"Probe complete — mDNS + {av_sent} AV broadcasts + ping sweep, "
+                f"{added} new ARP entries.",
+                "ok",
+            )
+        except Exception as e:
+            self.probe_status.emit(f"Probe error: {e}", "err")
+
+    def _on_probe_status(self, msg: str, kind: str):
+        if self._closed:
+            return
+        self._set_status(msg, kind)
+
+    def _suggest(self):
+        sug = self.sniffer.suggest_ip()
+        if not sug:
+            self._set_status("No traffic yet — start sniff or probe first.", "warn")
+            return
+        ip, prefix = sug
+        self.apply_subnet.emit(ip, prefix)
+        self._set_status(f"Suggested {ip}/{prefix} — filled into manual form.", "ok")
+
+    # ---- refresh ----
+    def _update_button_states(self):
+        # No manual sniff toggle anymore — kept as a no-op so external
+        # call sites (and the periodic timer) don't need branches.
+        pass
+
+    def _refresh(self):
+        if self._closed:
+            return
+        self._update_button_states()
+        self._update_sniff_chip()
+
+        st = self.sniffer.stats
+        self.stat_pkt.setText(f"{st.packets:,} packets")
+        self.stat_dev.setText(f"{len(self.sniffer.devices)} devices")
+        top = self.sniffer.top_subnets(3)
+        self.stat_sub.setText(
+            "  ·  ".join(f"{s}.0/24 ({c})" for s, c in top) if top else "no subnets yet"
+        )
+        if st.error:
+            self._set_status(st.error, "err")
+
+        running = self.sniffer.is_running()
+        if not self._dirty and running:
+            return
+        self._dirty = False
+
+        # Skip rebuild entirely when nothing meaningful has changed since
+        # last render. Signature = (filter text, sorted IP+kind+confidence
+        # tuples). Stats line still updates above; only the device-list
+        # rebuild is what causes visible flicker, so we cut it.
+        devs_for_sig = self.sniffer.device_list()
+        signature = (
+            (self.search.text() or "").strip().lower(),
+            tuple(sorted(
+                (d.ip, d.kind, d.confidence, d.hostname or "")
+                for d in devs_for_sig
+            )),
+        )
+        if signature == self._last_render_signature:
+            return
+        self._last_render_signature = signature
+
+        # Suspend paint while we tear down + rebuild the device list. Without
+        # this, Qt paints intermediate states where rows have been added to
+        # the layout but their child widgets haven't laid out yet — visible
+        # as a stripe pattern of empty card frames during active scanning.
+        self.list_host.setUpdatesEnabled(False)
+        try:
+            # takeAt + deleteLater alone leaves widgets parented to
+            # list_host until the event loop runs, and on the next refresh
+            # Qt sometimes re-attaches them to the layout — visible as a
+            # slowly-growing extra row in the scroll list. Explicitly
+            # setParent(None) breaks the parent link so deleteLater is the
+            # last reference and the widget genuinely goes away.
+            while self.list_layout.count() > 1:
+                item = self.list_layout.takeAt(0)
+                if item is None:
+                    break
+                w = item.widget()
+                if w is not None:
+                    w.setParent(None)
+                    w.deleteLater()
+
+            devs = self.sniffer.device_list()
+            if not devs:
+                empty = QLabel(
+                    "No devices yet. Start the sniff or hit Probe to flush the subnet."
+                )
+                empty.setObjectName("subtle")
+                empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                empty.setContentsMargins(0, 40, 0, 40)
+                self.list_layout.insertWidget(0, empty)
+                return
+
+            # Apply search filter first so AV/Other counts reflect the filter.
+            query = (self.search.text() or "").strip().lower()
+            if query:
+                def _match(d: Device) -> bool:
+                    hay = " ".join([
+                        d.ip or "",
+                        (d.mac or "").lower(),
+                        (d.hostname or "").lower(),
+                        (d.vendor or "").lower(),
+                        (d.kind or ""),
+                    ])
+                    return query in hay
+                devs = [d for d in devs if _match(d)]
+
+            # Split into AV + Other section headers — AV always renders first.
+            av_devs = [d for d in devs if is_av(d.kind) or d.is_gateway]
+            other_devs = [d for d in devs if not (is_av(d.kind) or d.is_gateway)]
+
+            if av_devs:
+                self._insert_section("PRO AV", f"{len(av_devs)} device(s)")
+                for dev in av_devs:
+                    row = DeviceRow(dev, self.sniffer)
+                    row.use_subnet.connect(self.apply_subnet)
+                    row.open_web.connect(self._on_open_web)
+                    self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+            if other_devs:
+                self._insert_section("OTHER", f"{len(other_devs)} device(s)")
+                for dev in other_devs:
+                    row = DeviceRow(dev, self.sniffer)
+                    row.use_subnet.connect(self.apply_subnet)
+                    row.open_web.connect(self._on_open_web)
+                    self.list_layout.insertWidget(self.list_layout.count() - 1, row)
+        finally:
+            # Always re-enable paint, even if rebuild raised — without this
+            # the device list would freeze blank on any exception above.
+            self.list_host.setUpdatesEnabled(True)
+
+    def _insert_section(self, title: str, count_text: str):
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(2, 10, 2, 2)
+        lay.setSpacing(8)
+        lbl = QLabel(title)
+        lbl.setObjectName("section")
+        cnt = QLabel(count_text)
+        cnt.setObjectName("subtle")
+        lay.addWidget(lbl)
+        lay.addStretch(1)
+        lay.addWidget(cnt)
+        self.list_layout.insertWidget(self.list_layout.count() - 1, row)
